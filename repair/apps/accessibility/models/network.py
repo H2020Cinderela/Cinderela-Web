@@ -7,7 +7,7 @@ from repair.apps.utils.protect_cascade import PROTECT_CASCADE
 
 
 class Vertex(models.Model):
-    casestudy = models.IntegerField()
+    casestudy = models.IntegerField(db_index=True)
     vertex_id = models.BigIntegerField()
     cnt = models.IntegerField(null=True)
     chk = models.IntegerField(null=True)
@@ -17,7 +17,7 @@ class Vertex(models.Model):
 
 
 class Edge(models.Model):
-    casestudy = models.IntegerField()
+    casestudy = models.IntegerField(db_index=True)
     edge_id = models.IntegerField()
     fromnode = models.ForeignKey(Vertex,
                                  on_delete=models.DO_NOTHING,
