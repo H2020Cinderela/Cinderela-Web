@@ -15,6 +15,8 @@ DATABASES = {
     },
 }
 
+DATABASES.update(accessibility_db)
+
 SPATIALITE_LIBRARY_PATH = 'mod_spatialite'
 
 WEBPACK_LOADER = {

@@ -32,6 +32,9 @@ DATABASES = {
     },
 }
 
+
+DATABASES.update(accessibility_db)
+
 DEBUG = False
 
 WEBPACK_LOADER = {

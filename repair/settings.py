@@ -16,6 +16,10 @@ import django
 
 from django.utils.translation import ugettext_lazy as _
 
+from repair.accessibility_db_router import (accessibility_db,
+                                            AccessibilityDatabaseRouter)
+
+
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 PUBLIC_ROOT = os.path.abspath(os.path.join(PROJECT_DIR, 'public'))
@@ -47,6 +51,9 @@ ALLOWED_HOSTS = ['geodesignhub.h2020repair.bk.tudelft.nl',
                  "localhost",
                  "127.0.0.1"]
 
+DATABASE_ROUTERS = [
+    'repair.accessibility_db_router.AccessibilityDatabaseRouter']
+
 # Application definition
 
 INSTALLED_APPS = [
@@ -57,7 +64,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.gis',
-    'django_pandas', 
+    'django_pandas',
     'djmoney',
     'rest_framework',
     'rest_framework_gis',
@@ -70,6 +77,7 @@ INSTALLED_APPS = [
     'repair.apps.publications',
     'repair.apps.reversions',
     'repair.apps.wmsresources',
+    'repair.apps.accessibility',
     'reversion',
     'reversion_compare', # https://github.com/jedie/django-reversion-compare
     'publications_bootstrap',
@@ -273,7 +281,7 @@ LOGGING = {
                 'level': 'INFO',
                 'propagate': False,
             },
-        
+
             #'django.db.backends': {
                 #'level': 'DEBUG',
                 #'handlers': ['console'],

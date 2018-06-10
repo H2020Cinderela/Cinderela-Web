@@ -19,8 +19,13 @@ DATABASES = {
         'ENGINE': 'django.contrib.gis.db.backends.spatialite',
         'NAME': 'db_tests.sqlite3',
     },
-
+    'accessibility_db': {
+        'ENGINE': 'django.contrib.gis.db.backends.spatialite',
+        'NAME': 'accessibility_db_tests.sqlite3',
+    }
 }
+
+DATABASES.update(accessibility_db)
 
 SPATIALITE_LIBRARY_PATH = 'mod_spatialite'
 
