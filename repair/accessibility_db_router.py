@@ -17,6 +17,10 @@ accessibility_db = {
         'OPTIONS': {
             'sslmode': 'require',
             },
+        'TEST': {
+            'NAME': 'test_gdse_accessibility',
+            'TEMPLATE': 'postgis_template',
+                    },
         }
     }
 
