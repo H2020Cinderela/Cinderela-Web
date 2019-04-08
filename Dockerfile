@@ -40,7 +40,7 @@ USER circleci
 
 
 RUN cd /home/circleci && \
-    git clone https://github.com/MaxBo/Cinderela-Web.git cinderelaweb && \
+    git clone https://github.com/H2020Cinderela/Cinderela-Web.git cinderelaweb && \
     cd cinderelaweb && \
     python -m pip install --upgrade pip && \
 	pip install scipy && \
