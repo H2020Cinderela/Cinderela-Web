@@ -2,9 +2,11 @@ from django.utils.translation import ugettext_lazy as _
 from rest_framework_nested.serializers import NestedHyperlinkedModelSerializer
 from rest_framework import serializers
 
+from repair.apps.asmfa.graphs.graph import StrategyGraph
 from repair.apps.changes.models import (Strategy,
                                         SolutionInStrategy,
                                         ImplementationQuantity,
+                                        ActorInSolutionPart
                                         )
 
 from repair.apps.login.serializers import (InCasestudyField,
@@ -66,6 +68,7 @@ class StrategySerializer(CreateWithUserInCasestudyMixin,
         read_only=True)
     coordinating_stakeholder = IDRelatedField()
     user = IDRelatedField(read_only=True)
+    graph_build = serializers.SerializerMethodField()
 
     class Meta:
         model = Strategy
@@ -73,7 +76,12 @@ class StrategySerializer(CreateWithUserInCasestudyMixin,
                   'coordinating_stakeholder',
                   'solution_list',
                   'sii_set',
+                  'graph_build'
                   )
+
+    def get_graph_build(self, obj):
+        sgraph = StrategyGraph(obj)
+        return sgraph.date
 
     def update(self, instance, validated_data):
         """
@@ -111,6 +119,18 @@ class StrategyField(InCasestudyField):
     }
 
 
+class ImplementationQuantitySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ImplementationQuantity
+        fields = ('question', 'value')
+
+
+class ActorInSolutionPartSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ActorInSolutionPart
+        fields = ('solutionpart', 'actor')
+
+
 class SolutionInStrategySerializer(serializers.ModelSerializer):
     parent_lookup_kwargs = {
         'casestudy_pk': 'strategy__keyflow__casestudy__id',
@@ -118,51 +138,29 @@ class SolutionInStrategySerializer(serializers.ModelSerializer):
         'strategy_pk': 'strategy__id'
     }
     participants = IDRelatedField(many=True, required=False)
+    quantities = ImplementationQuantitySerializer(
+        many=True, source='implementation_quantity', required=False)
+    picked_actors = ActorInSolutionPartSerializer(many=True, required=False)
 
     class Meta:
         model = SolutionInStrategy
-        fields = ('id',
-                  'solution',
-                  'note', 'geom',
-                  'participants',
-                  'priority'
-                  )
+        fields = ('id', 'solution', 'note', 'geom',
+                  'participants', 'priority', 'quantities', 'picked_actors')
 
-
-class SolutionInStrategyField(InCasestudyField):
-    parent_lookup_kwargs = {
-        'casestudy_pk': 'strategy__keyflow__casestudy__id',
-        'keyflow_pk': 'strategy__keyflow__id',
-        'strategy_pk': 'strategy__id'
-    }
-
-
-class SolutionInStrategyDetailCreateMixin:
-    def create(self, validated_data):
-        """Create a new solution quantity"""
-        url_pks = self.context['request'].session['url_pks']
-        solution_pks = url_pks['solution_pk']
-        sii = SolutionInStrategy.objects.get(id=solution_pks)
-
-        obj = self.Meta.model.objects.create(
-            sii=sii,
-            **validated_data)
-        return obj
-
-
-class ImplementationQuantitySerializer(SolutionInStrategyDetailCreateMixin,
-                                       NestedHyperlinkedModelSerializer):
-    parent_lookup_kwargs = {
-        'casestudy_pk': 'sii__strategy__keyflow__casestudy__id',
-        'keyflow_pk': 'sii__strategy__keyflow__id',
-        'strategy_pk': 'sii__strategy__id',
-        'solution_pk': 'sii__id'
-    }
-    implementation = IDRelatedField(read_only=True)
-    question = IDRelatedField(read_only=True)
-    value = IDRelatedField(read_only=True)
-
-    class Meta:
-        model = ImplementationQuantity
-        fields = ('url', 'id', 'implementation', 'question', 'value')
+    def update(self, instance, validated_data):
+        quantities = validated_data.pop('implementation_quantity', [])
+        picked_actors = validated_data.pop('picked_actors', None)
+        instance = super().update(instance, validated_data)
+        for q in quantities:
+            # quantities are created automatically, no need to delete them
+            quantity = ImplementationQuantity.objects.get(
+                question=q['question'], implementation=instance)
+            quantity.value = q['value'];
+            quantity.save()
+        if picked_actors:
+            ActorInSolutionPart.objects.filter(implementation=instance).delete()
+            for a in picked_actors:
+                ais = ActorInSolutionPart(implementation=instance, **a)
+                ais.save()
+        return instance
 
