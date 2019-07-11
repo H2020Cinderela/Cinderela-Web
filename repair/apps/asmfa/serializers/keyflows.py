@@ -107,7 +107,7 @@ class KeyflowField(NestedHyperlinkedRelatedField):
     """This is fixed in rest_framework_nested, but not yet available on pypi"""
     def use_pk_only_optimization(self):
         return False
-    
+
 
 class KeyflowInCasestudySerializer(NestedHyperlinkedModelSerializer):
     parent_lookup_kwargs = {'casestudy_pk': 'casestudy__id'}
@@ -133,7 +133,7 @@ class KeyflowInCasestudySerializer(NestedHyperlinkedModelSerializer):
                                  allow_blank=True, required=False)
     name = serializers.CharField(source='keyflow.name',
                                  allow_blank=True, required=False)
-    graph_build = serializers.SerializerMethodField()
+    graph_date = serializers.SerializerMethodField()
 
     class Meta:
         model = KeyflowInCasestudy
@@ -156,10 +156,12 @@ class KeyflowInCasestudySerializer(NestedHyperlinkedModelSerializer):
                   'actors',
                   'administrative_locations',
                   'operational_locations',
-                  'graph_build'
+                  'graph_date',
+                  'sustainability_statusquo',
+                  'sustainability_conclusions'
                   )
-    
-    def get_graph_build(self, obj):
+
+    def get_graph_date(self, obj):
         kfgraph = BaseGraph(obj)
         return kfgraph.date
 
@@ -174,7 +176,15 @@ class KeyflowInCasestudyPostSerializer(InCasestudySerializerMixin,
         model = KeyflowInCasestudy
         fields = ('keyflow',
                   'note',
+                  'sustainability_statusquo',
+                  'sustainability_conclusions'
                   )
+        extra_kwargs = {
+            'sustainability_statusquo': {'required': False, 'allow_null': True},
+            'sustainability_conclusions': {
+                'required': False, 'allow_null': True
+            },
+        }
 
 
 class KeyflowInCasestudyDetailCreateMixin:

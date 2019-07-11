@@ -1,12 +1,15 @@
 from django.utils.translation import ugettext_lazy as _
 from rest_framework_nested.serializers import NestedHyperlinkedModelSerializer
 from rest_framework import serializers
+from django.utils import timezone
+from django.db.utils import OperationalError
 
 from repair.apps.asmfa.graphs.graph import StrategyGraph
+from repair.apps.asmfa.models import FractionFlow, StrategyFractionFlow
 from repair.apps.changes.models import (Strategy,
                                         SolutionInStrategy,
                                         ImplementationQuantity,
-                                        ActorInSolutionPart
+                                        ActorInSolutionPart,
                                         )
 
 from repair.apps.login.serializers import (InCasestudyField,
@@ -52,36 +55,70 @@ class StakeholderOfStrategyField(InCasestudyField):
         'stakeholdercategory_pk': 'stakeholder_category__id', }
 
 
+def reset_strategy_status():
+    '''reset strategy calculation status'''
+    # if strategy is not set up (e.g. while testing),
+    # there won't be any strategies anyway
+    try:
+        strategies = Strategy.objects.all()
+        # look for strategies marked as being calculated and update their status
+        # according to found graph
+        for strategy in strategies:
+            if strategy.status != 1:
+                continue
+            sgraph = StrategyGraph(strategy)
+            if not sgraph.exists:
+                strategy.status = 0
+                strategy.date = null
+            else:
+                strategy.status = 2
+                strategy.date = sgraph.date
+            strategy.save()
+    except:
+        return
+
+
 class StrategySerializer(CreateWithUserInCasestudyMixin,
                          NestedHyperlinkedModelSerializer):
     parent_lookup_kwargs = {
         'casestudy_pk': 'keyflow__casestudy__id',
         'keyflow_pk': 'keyflow__id',
     }
-    solution_list = SolutionInStrategyListField(
-        source='solutioninstrategy_set',
-        view_name='solutioninstrategy-list')
-    sii_set = SolutionInStrategySetField(
-        source='solutioninstrategy_set',
-        view_name='solutioninstrategy-detail',
-        many=True,
-        read_only=True)
     coordinating_stakeholder = IDRelatedField()
     user = IDRelatedField(read_only=True)
-    graph_build = serializers.SerializerMethodField()
+    status_text = serializers.SerializerMethodField()
+    solutions = serializers.SerializerMethodField()
+    affected_activities = serializers.SerializerMethodField()
 
     class Meta:
         model = Strategy
         fields = ('url', 'id', 'name', 'user',
-                  'coordinating_stakeholder',
-                  'solution_list',
-                  'sii_set',
-                  'graph_build'
-                  )
+                  'coordinating_stakeholder', 'solutions',
+                  'status', 'status_text', 'affected_activities')
 
-    def get_graph_build(self, obj):
-        sgraph = StrategyGraph(obj)
-        return sgraph.date
+        extra_kwargs = {'status': {'read_only': True}}
+
+    def get_solutions(self, obj):
+        sii = obj.solutioninstrategy.all()
+        return sii.values_list('solution__id', flat=True)
+
+    def get_status_text(self, obj):
+        if obj.status == 0:
+            return _('not calculated yet')
+        if obj.status == 1:
+            delta = timezone.now() - obj.date
+            return '{} @{} {} - {}s {}'.format(
+                _('calculation started'),
+                obj.date.strftime("%d.%m.%Y, %H:%M:%S"),
+                _('(server time)'),
+                round(delta.total_seconds()), _('elapsed')
+            )
+        if obj.status == 2:
+            return '{} @{} {}'.format(
+                _('calculation finished'),
+                obj.date.strftime("%d.%m.%Y, %H:%M:%S"),
+                _('(server time)'))
+        return ''
 
     def update(self, instance, validated_data):
         """
@@ -110,6 +147,22 @@ class StrategySerializer(CreateWithUserInCasestudyMixin,
             setattr(instance, attr, value)
         instance.save()
         return instance
+
+    def get_affected_activities(self, obj):
+        new_flows = FractionFlow.objects.filter(strategy=obj, amount__gt=0)
+        modified = StrategyFractionFlow.objects.filter(strategy=obj)
+        modified_flows = FractionFlow.objects.filter(
+            id__in=modified.values_list('fractionflow__id'))
+        activities = list(new_flows.values_list(
+            'origin__activity__id',
+            'destination__activity__id',
+        ))
+        activities += list(modified_flows.values_list(
+            'origin__activity__id',
+            'destination__activity__id',
+        ))
+        activities = set([i for s in activities for i in s])
+        return activities
 
 
 class StrategyField(InCasestudyField):

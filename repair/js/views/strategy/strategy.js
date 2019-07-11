@@ -1,9 +1,10 @@
 define(['views/common/baseview', 'underscore', 'collections/gdsecollection/',
-        'collections/geolocations/',
+        'collections/geolocations/','views/study-area/workshop-maps',
         'visualizations/map', 'utils/utils', 'muuri', 'openlayers',
         'app-config', 'bootstrap', 'bootstrap-select'],
 
-function(BaseView, _, GDSECollection, GeoLocations, Map, utils, Muuri, ol, config){
+function(BaseView, _, GDSECollection, GeoLocations, BaseMapView, Map, utils,
+         Muuri, ol, config){
 /**
 *
 * @author Christoph Franke
@@ -288,7 +289,15 @@ var StrategyView = BaseView.extend(
         }
         $(stakeholderSelect).selectpicker();
 
-        this.renderEditorMap('editor-map', solutionImpl);
+        if (this.editorMapView) this.editorMapView.close();
+        this.editorMapView = new BaseMapView({
+            template: 'base-maps-template',
+            el: document.getElementById('editor-map'),
+            caseStudy: this.caseStudy,
+            onReady: function(){
+                _this.setupEditor(solutionImpl);
+            }
+        });
 
         var hasActorsToPick = false;
         solution.parts.forEach(function(part){
@@ -299,7 +308,7 @@ var StrategyView = BaseView.extend(
             editorLi = this.solutionModal.querySelector('a[href="#strategy-area-tab"]');
         // update map after switching to tab to fit width and height of wrapping div
         $(editorLi).on('shown.bs.tab', function () {
-            _this.editorMap.map.updateSize();
+            if (_this.editorMap) _this.editorMap.map.updateSize();
         });
         if (hasActorsToPick){
             this.pickedActors = {};
@@ -339,7 +348,7 @@ var StrategyView = BaseView.extend(
             if (features.length > 0){
                 var geometries = [];
                 features.forEach(function(feature) {
-                    var geom = feature.getGeometry();
+                    var geom = feature.getGeometry().transform(_this.editorMap.mapProjection, _this.projection);
                     geometries.push(geom);
                 });
                 var geoCollection = new ol.geom.GeometryCollection(geometries),
@@ -347,6 +356,8 @@ var StrategyView = BaseView.extend(
                     geoJSONText = geoJSON.writeGeometry(geoCollection);
                 solutionImpl.set('geom', geoJSONText);
             }
+            else
+                solutionImpl.set('geom', null);
 
             var quantityInputs = _this.solutionModal.querySelectorAll('input[name="quantity"]'),
                 quantities = [];
@@ -458,7 +469,8 @@ var StrategyView = BaseView.extend(
     * render the map with the drawn polygons into the solution item
     */
     renderSolutionPreviewMap: function(solutionImpl, item){
-        var divid = 'solutionImpl' + solutionImpl.id;
+        var divid = 'solutionImpl' + solutionImpl.id,
+            _this = this;
         var mapDiv = item.querySelector('.olmap');
         mapDiv.id = divid;
         mapDiv.innerHTML = '';
@@ -473,7 +485,7 @@ var StrategyView = BaseView.extend(
             previewMap.addLayer('geometry');
             geom.geometries.forEach(function(g){
                 previewMap.addGeometry(g.coordinates, {
-                    projection: 'EPSG:3857', layername: 'geometry',
+                    projection: _this.projection, layername: 'geometry',
                     type: g.type
                 });
             })
@@ -531,22 +543,17 @@ var StrategyView = BaseView.extend(
     /*
     * render the map to draw on inside the solution modal
     */
-    renderEditorMap: function(divid, solutionImpl){
+    setupEditor: function(solutionImpl){
         var _this = this,
-            el = document.getElementById(divid),
-            solution = this.solutions.get(solutionImpl.get('solution'));
-        // calculate (min) height
-        var height = document.body.clientHeight * 0.6;
-        el.style.height = height + 'px';
-        // remove old map
-        if (this.editorMap){
-            this.editorMap.map.setTarget(null);
-            this.editorMap.map = null;
-            this.editorMap = null;
-        }
-        this.editorMap = new Map({
-            el: el
-        });
+            solution = this.solutions.get(solutionImpl.get('solution')),
+            html = document.getElementById('drawing-tools-template').innerHTML,
+            template = _.template(html),
+            toolsDiv = document.createElement('div');
+
+        toolsDiv.innerHTML = template();
+        this.el.querySelector('#base-map').prepend(toolsDiv);
+
+        this.editorMap = this.editorMapView.map;
 
         if (this.focusPoly){
             this.editorMap.centerOnPolygon(this.focusPoly, { projection: this.projection });
@@ -556,15 +563,36 @@ var StrategyView = BaseView.extend(
             stroke: 'grey',
             fill: 'rgba(70, 70, 70, 0.5)',
             strokeWidth: 1,
-            zIndex: 0
+            zIndex: 999
         });
         this.editorMap.addLayer('implementation-area', {
             stroke: '#aad400',
             fill: 'rgba(170, 212, 0, 0)',
             strokeWidth: 1,
-            zIndex: 0
+            zIndex: 998
         });
 
+        var geom = solutionImpl.get('geom');
+
+        this.editorMap.addLayer('drawing', {
+            select: { selectable: true },
+            strokeWidth: 3,
+            zIndex: 1000
+        });
+
+        if (geom){
+            geom.geometries.forEach(function(g){
+                _this.editorMap.addGeometry(g.coordinates, {
+                    projection: _this.projection, layername: 'drawing',
+                    type: g.type
+                });
+            })
+            _this.editorMap.centerOnLayer('drawing');
+        }
+        var drawingTools = this.el.querySelector('.drawing-tools'),
+            removeBtn = drawingTools.querySelector('.remove'),
+            tools = drawingTools.querySelectorAll('.tool'),
+            togglePossibleArea = this.el.querySelector('input[name="show-possible-area"]');
 
         var implArea = solution.get('possible_implementation_area') || '';
         if(implArea) {
@@ -582,36 +610,26 @@ var StrategyView = BaseView.extend(
                 tooltip: gettext('possible implementation area')
             });
             this.editorMap.centerOnPolygon(area, { projection: this.projection });
+        } else {
+            togglePossibleArea.parentElement.style.display = 'none';
         }
 
+        togglePossibleArea.addEventListener('change', function(){
+            _this.editorMap.setVisible('implementation-area', this.checked);
+            _this.editorMap.setVisible('mask', this.checked);
+        })
 
-        var geom = solutionImpl.get('geom');
-
-        this.editorMap.addLayer('drawing', {
-            select: { selectable: true },
-            strokeWidth: 3
-        });
-
-        if (geom){
-            geom.geometries.forEach(function(g){
-                _this.editorMap.addGeometry(g.coordinates, {
-                    projection: 'EPSG:3857', layername: 'drawing',
-                    type: g.type
-                });
-            })
-            _this.editorMap.centerOnLayer('drawing');
-        }
-        var drawingTools = this.el.querySelector('.drawing-tools'),
-            removeBtn = drawingTools.querySelector('.remove'),
-            freehand = drawingTools.querySelector('.freehand'),
-            tools = drawingTools.querySelectorAll('.tool');
+        removeBtn.addEventListener('click', function(){
+            _this.editorMap.removeSelectedFeatures('drawing');
+        })
 
         function toolChanged(){
             var checkedTool = drawingTools.querySelector('.active').querySelector('input'),
                 type = checkedTool.dataset.tool,
                 selectable = false,
                 useDragBox = false,
-                removeActive = false;
+                removeActive = false,
+                freehand = checkedTool.dataset.freehand === 'true';
             if (type === 'Move'){
                 _this.editorMap.toggleDrawing('drawing');
             }
@@ -624,7 +642,8 @@ var StrategyView = BaseView.extend(
             else {
                 _this.editorMap.toggleDrawing('drawing', {
                     type: type,
-                    freehand: freehand.checked
+                    freehand: freehand,
+                    intersectionLayer: (implArea) ? 'implementation-area': null
                 });
                 _this.editorMap.enableDragBox('drawing');
             }
@@ -643,11 +662,6 @@ var StrategyView = BaseView.extend(
             //tool.addEventListener('change', toolChanged);
             $(tool).on('change', toolChanged)
         }
-        freehand.addEventListener('change', toolChanged);
-
-        removeBtn.addEventListener('click', function(){
-            _this.editorMap.removeSelectedFeatures('drawing');
-        })
     },
 
     saveOrder: function(){

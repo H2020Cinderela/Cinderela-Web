@@ -4,7 +4,8 @@ from reversion.views import RevisionMixin
 from rest_framework.response import Response
 from django.http import HttpResponseBadRequest, HttpResponse
 from django.db.models.functions import Coalesce
-from django.db.models import Q, Subquery, Min, IntegerField, OuterRef, Sum, F
+from django.db.models import (Q, Subquery, Min, IntegerField, OuterRef, Sum, F,
+                              Case, When, Value)
 import time
 import numpy as np
 import copy
@@ -16,6 +17,7 @@ from django.contrib.gis.db.models import Union
 from repair.apps.utils.views import (CasestudyViewSetMixin,
                                      ModelPermissionViewSet,
                                      PostGetViewMixin)
+from repair.apps.utils.utils import descend_materials
 
 from repair.apps.asmfa.models import (
     Flow, AdministrativeLocation, Actor2Actor, Group2Group,
@@ -61,42 +63,6 @@ LEVEL_KEYWORD = {
     Activity: 'activity',
     ActivityGroup: 'activitygroup'
 }
-
-def descend_materials(materials):
-    """return list of material ids of given materials and all of their
-    descendants
-    """
-    mats = []
-    all_materials = Material.objects.values_list('id', 'parent__id')
-    mat_dict = {}
-
-    # might seem strange to build a dict with all materials and it's
-    # children, but this is in fact 1000 times faster than
-    # doing this in iteration over given material queryset
-    for mat_id, parent_id in all_materials:
-        if not parent_id:
-            continue
-        parent_entry = mat_dict.get(parent_id)
-        if not parent_entry:
-            parent_entry = []
-            mat_dict[parent_id] = parent_entry
-        parent_entry.append(mat_id)
-
-    def get_descendants(mat_id):
-        descendants = []
-        children = mat_dict.get(mat_id, [])
-        for child_id in children:
-            descendants.append(child_id)
-            descendants.extend(get_descendants(child_id))
-        return descendants
-
-    # use the dict to get all descending child materials
-    for material in materials:
-        # get the children of the given material
-        mats.extend(get_descendants(material.id))
-        # fractions have to contain children and the material itself
-        mats.append(material.id)
-    return mats
 
 def build_area_filter(function_name, values, keyflow_id):
     actors = Actor.objects.filter(
@@ -162,6 +128,16 @@ class FilterFlowViewSet(PostGetViewMixin, RevisionMixin,
         }
         '''
         self.check_permission(request, 'view')
+
+        strategy_id = request.query_params.get('strategy', None)
+        if strategy_id is not None:
+            strategy = Strategy.objects.get(id=strategy_id)
+            if strategy.status == 0:
+                return HttpResponseBadRequest(
+                    _('calculation is not done yet'))
+            if strategy.status == 1:
+                return HttpResponseBadRequest(
+                    _('calculation is still in process'))
 
         # filter by query params
         queryset = self._filter(kwargs, query_params=request.query_params,
@@ -240,21 +216,27 @@ class FilterFlowViewSet(PostGetViewMixin, RevisionMixin,
         queryset = super()._filter(lookup_args, query_params=query_params,
                                    SerializerClass=SerializerClass)
         if strategy:
+            # ToDo: material
             queryset = queryset.filter(
                 (
                     Q(f_strategyfractionflow__isnull = True) |
                     Q(f_strategyfractionflow__strategy = strategy[0])
                 )
             ).annotate(
+                # strategy fraction flow overrides amounts
                 strategy_amount=Coalesce(
                     'f_strategyfractionflow__amount', 'amount'),
-                #actual_origin=Coalesce(
-                    #'f_strategyfractionflow__origin', 'origin'),
-                #actual_destination=Coalesce(
-                    #'f_strategyfractionflow__destination', 'destination')
+                # set new flow amounts to zero for status quo
+                statusquo_amount=Case(
+                    When(strategy__isnull=True, then=F('amount')),
+                    default=Value(0),
+                )
             )
         else:
+            # flows without filters for status quo
             queryset = queryset.filter(strategy__isnull=True)
+            # just for convenience, use field statusquo_amount
+            queryset = queryset.annotate(statusquo_amount=F('amount'))
         return queryset
 
     def list(self, request, **kwargs):
@@ -324,16 +306,13 @@ class FilterFlowViewSet(PostGetViewMixin, RevisionMixin,
     def serialize_nodes(nodes, add_locations=False, add_fields=[]):
         '''
         serialize actors, activities or groups in the same way
-        add_locations works only for actors
+        add_locations works, only for actors
         '''
         args = ['id', 'name'] + add_fields
         if add_locations:
             args.append('administrative_location__geom')
-
-        node_dict = dict(
-            zip(nodes.values_list('id', flat=True),
-                nodes.values(*args))
-        )
+        values = nodes.values(*args)
+        node_dict = {v['id']: v for v in values}
         if add_locations:
             for k, v in node_dict.items():
                 geom = v.pop('administrative_location__geom')
@@ -358,7 +337,6 @@ class FilterFlowViewSet(PostGetViewMixin, RevisionMixin,
         origin_level = LEVEL_KEYWORD[origin_model]
         destination_level = LEVEL_KEYWORD[destination_model]
         data = []
-        flow_ids = queryset.values('id')
         origins = origin_model.objects.filter(
             id__in=queryset.values(origin_filter))
         destinations = destination_model.objects.filter(
@@ -389,7 +367,7 @@ class FilterFlowViewSet(PostGetViewMixin, RevisionMixin,
         for group in groups:
             grouped = queryset.filter(**group)
             # sum over all rows in group
-            total_amount = list(grouped.aggregate(Sum('amount')).values())[0]
+            total_amount = list(grouped.aggregate(Sum('statusquo_amount')).values())[0]
             origin_item = origin_dict[group[origin_filter]]
             origin_item['level'] = origin_level
             dest_item = destination_dict[group[destination_filter]]
@@ -399,14 +377,15 @@ class FilterFlowViewSet(PostGetViewMixin, RevisionMixin,
             annotation = {
                 'name':  F('material__name'),
                 'level': F('material__level'),
-                'amount': Sum('amount')
+                'statusquo_amount': Sum('statusquo_amount')
             }
             if strategy is not None:
-                annotation['amount'] = Sum('strategy_amount')
-                # F('amount') takes Sum annotation instead of real field
-                annotation['delta'] = (Sum('strategy_amount') - F('amount'))
                 total_strategy_amount = \
                     list(grouped.aggregate(Sum('strategy_amount')).values())[0]
+                annotation['strategy_amount'] = F('strategy_amount')
+                # F('amount') takes Sum annotation instead of real field
+                annotation['delta'] = (F('strategy_amount') -
+                                       F('statusquo_amount'))
             grouped_mats = \
                 list(grouped.values('material').annotate(**annotation))
             # aggregate materials according to mapping aggregation_map
@@ -414,7 +393,8 @@ class FilterFlowViewSet(PostGetViewMixin, RevisionMixin,
                 aggregated = {}
                 for grouped_mat in grouped_mats:
                     mat_id = grouped_mat['material']
-                    amount = grouped_mat['amount']
+                    amount = grouped_mat['statusquo_amount'] if not strategy \
+                        else grouped_mat['strategy_amount']
                     mapped = aggregation_map[mat_id]
 
                     agg_mat_ser = aggregated.get(mapped.id, None)
