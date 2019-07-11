@@ -55,9 +55,66 @@ select {
   font-family: 'Montserrat', sans-serif;
 }
 
-.sankey, .tooltip, .sankeymaptooltip, .d3-tip{
+.sankey, .tooltip, .oltooltip, .sankeymaptooltip, .d3-tip{
   font-family: 'Roboto', sans-serif;
   /*font-size: 0.9em;*/
+}
+
+.d3-tip h1 {
+  font-weight: bold;
+  font-size: 14px;
+  padding: 0;
+  margin-top: 3px;
+  margin-bottom: 2px;
+  width: 100%;
+}
+.d3-tip h2 {
+  font-weight: bold;
+  font-size: 12px;
+  padding-right: inherit;
+  padding-left: inherit;
+  padding-top: 2px;
+  padding-bottom: 2px;
+  margin: 0px;
+}
+.d3-tip h3 {
+  font-weight: normal;
+  font-size: 8px;
+  margin: 0;
+  padding: 0;
+}
+.d3-tip table {
+  font-weight: normal;
+  font-size: 12px;
+  padding: none;
+  margin: 0;
+  width: 100%;
+  border: none;
+  border-collapse: collapse;
+}
+.d3-tip td {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+.d3-tip .col-left {
+  padding-right: 8px;
+}
+.d3-tip .table-wrapper {
+  margin: 0;
+  padding: inherit;
+  border: none;
+}
+.d3-tip {
+  line-height: 1;
+  font-weight: normal;
+  padding: 8px;
+  background: white;
+  color: black;
+  border-radius: 2px;
+  pointer-events: none;
+  background:  white;
+  box-shadow: 1px 1px 4px grey;
+  z-index: 99999;
 }
 
 a {
@@ -422,9 +479,9 @@ tr.popunder > td{
   background-color: white;
 }
 
-.bordered:hover{
-  border-color: @main-color;
-}
+/*.bordered:hover{*/
+  /*border-color: @main-color;*/
+/*}*/
 
 .dashed {
   border: 2px dashed @main-color;
@@ -641,6 +698,10 @@ button.square:hover, button.round:hover, button.square:focus, button.round:focus
   cursor: pointer;
 }
 
+.item-panel.muuri .panel-item{
+  position: absolute;
+}
+
 .panel-item.draggable, .panel-item.draggable label {
   cursor: move;
 }
@@ -663,11 +724,12 @@ button.square:hover, button.round:hover, button.square:focus, button.round:focus
   border-radius: 50%;
   background-color: @main-color;
   display: None;float: right;
-  position: absolute;
+  /*position: absolute;*/
   right: 0px;
   bottom: 0px;
   top: 0px;
   margin: auto;
+  margin-top: 10px;
   color: white;
   font-family: 'Roboto', 'sans-serif';
 }

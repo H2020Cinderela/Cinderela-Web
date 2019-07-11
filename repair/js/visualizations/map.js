@@ -1,9 +1,10 @@
 define([
-    'openlayers', //'ol-contextmenu',
+    'openlayers', //'ol-contextmenu',,
+    'turf',
     'openlayers/css/ol.css',
     //'ol-contextmenu/dist/ol-contextmenu.min.css',
     'static/css/map.css'
-], function(ol, ContextMenu)
+], function(ol, turf, ContextMenu)
 {
     /**
     *
@@ -46,6 +47,7 @@ define([
                 initlayers.push(new ol.layer.Tile({
                     source: new ol.source.OSM({crossOrigin: 'anonymous'}),
                     crossOrigin: 'anonymous',
+                    opacity: options.opacity || 1,
                     tileOptions: {crossOriginKeyword: 'anonymous'},
                 }))
             }
@@ -66,7 +68,6 @@ define([
                     mouseWheelZoom: enableZoom,
                     dragZoom: enableZoom
                 };
-
 
             if (!enableDrag) {
                 interactOptions.keyboardPan = false;
@@ -96,35 +97,34 @@ define([
 
             this.div = options.el;
 
-            var tooltip = this.div.querySelector('.tooltip');
+            var tooltip = this.div.querySelector('.oltooltip');
             if (!tooltip){
                 tooltip = document.createElement('div');
-                tooltip.classList.add('tooltip');
+                tooltip.classList.add('oltooltip');
                 this.div.appendChild(tooltip);
             }
-            if (tooltip){
-                var overlay = new ol.Overlay({
-                    element: tooltip,
-                    offset: [10, 0],
-                    positioning: 'bottom-left'
+            var overlay = new ol.Overlay({
+                element: tooltip,
+                offset: [10, 0],
+                positioning: 'bottom-left'
+            });
+            this.map.addOverlay(overlay);
+
+            function displayTooltip(evt) {
+                var pixel = evt.pixel;
+                var feature = _this.map.forEachFeatureAtPixel(pixel, function(feature) {
+                    return feature;
                 });
-                this.map.addOverlay(overlay);
+                if (feature && feature.get('tooltip')) {
+                    overlay.setPosition(evt.coordinate);
+                    tooltip.innerHTML = feature.get('tooltip');
+                    tooltip.style.display = '';
+                }
+                else tooltip.style.display = 'none';
+            };
 
-                function displayTooltip(evt) {
-                    var pixel = evt.pixel;
-                    var feature = _this.map.forEachFeatureAtPixel(pixel, function(feature) {
-                        return feature;
-                    });
-                    if (feature && feature.get('tooltip')) {
-                        overlay.setPosition(evt.coordinate);
-                        tooltip.innerHTML = feature.get('tooltip');
-                        tooltip.style.display = '';
-                    }
-                    else tooltip.style.display = 'none';
-                };
+            this.map.on('pointermove', displayTooltip);
 
-                this.map.on('pointermove', displayTooltip);
-            }
         }
 
         /**
@@ -220,6 +220,7 @@ define([
             }
 
             var layer = new ol.layer.Vector({
+                opacity: options.opacity || 1,
                 source: source || new ol.source.Vector(),
                 style: (options.colorRange != null) ? colorRangeStyle: defaultStyle
             });
@@ -746,6 +747,7 @@ define([
         * @param {string} layername          layer to draw on
         * @param {Object} options
         * @param {string} [options.type='None']      type of geometry to draw ('Polygon', 'Point', 'Circle', 'LineString', 'None')
+        * @param {string=} [options.intersectionLayer]  intersect drawings with features of layer
         * @param {Boolean} [options.freehand=false]  freehand drawing or drawing by setting points
         *
         */
@@ -767,17 +769,61 @@ define([
                     return touchEvent.length === 1;
                 return true;
             }
+            var drawIntersect = options.intersectionLayer && this.layers[options.intersectionLayer];
 
-            var source = layer.getSource(),
-                draw = new ol.interaction.Draw({
-                    source: source,
-                    type: type,
-                    freehand: freehand,
-                    //condition: oneFingerCondition
-                });
+            var source = layer.getSource();
+
+            // draw in a temporary source and add it to layer after intersecting
+            // if intersection requested, draw directly on layer else
+            if(drawIntersect){
+                source = new ol.source.Vector({
+                    format: new ol.format.GeoJSON(),
+                    url: source.getUrl(),
+                    projection : source.getProjection()
+                })
+            }
+            var draw = new ol.interaction.Draw({
+                source: source,
+                type: type,
+                freehand: freehand
+            });
+
             layer.drawingInteraction = draw;
             this.map.addInteraction(draw);
+            if(drawIntersect){
+                var intersectionLayer = this.layers[options.intersectionLayer],
+                    geojsonFormat = new ol.format.GeoJSON();
+                draw.on('drawend', function(event) {
+                    var poly1 = geojsonFormat.writeFeatureObject(event.feature),
+                        extent1 = event.feature.getGeometry().getExtent(),
+                        source = intersectionLayer.getSource(),
+                        features = source.getFeatures();
+                    features.forEach(function(feature) {
+                        if (!ol.extent.intersects(extent1, feature.getGeometry().getExtent())) {
+                            return;
+                        }
+                        var poly2 = geojsonFormat.writeFeatureObject(feature),
+                            intersection;
+                        try {
+                            intersection = turf.intersect(poly1, poly2);
+                        }
+                        catch (e){
+                            console.log(e)
+                            _this.alert(gettext('Self-intersection in polygon. Please try again'))
+                            // ToDo: package @turf/unkink-polygon,
+                            //       iterate unkinked polygons
+                            //var unkinked = turf.unkinkPolygon(poly1);
+                            //console.log(unkinked)
+                            //intersection = turf.intersect(unkinked[0], poly2);
+                        }
+                        if (intersection) {
+                            layer.getSource().addFeature(geojsonFormat.readFeature(intersection));
+                        }
+                    });
+                });
             }
+
+        }
 
         /**
         * enable/disable drag box to select features

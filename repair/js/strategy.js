@@ -1,10 +1,11 @@
 require(['models/casestudy', 'models/gdsemodel', 'collections/gdsecollection',
          'views/strategy/workshop-solutions', 'views/strategy/modified-flows',
          'views/strategy/setup-solutions', 'views/strategy/setup-solutions-logic',
-         'views/strategy/strategy', 'app-config', 'utils/utils', 'utils/overrides', 'base'
+         'views/strategy/strategy', 'views/strategy/flow-target-control',
+         'app-config', 'utils/utils', 'utils/overrides', 'base'
 ], function (CaseStudy, GDSEModel, GDSECollection, SolutionsWorkshopView,
              ModifiedFlowsView, SolutionsSetupView, SolutionsLogicView,
-             StrategyView, appConfig, utils) {
+             StrategyView, FlowTargetControlView, appConfig, utils) {
     /**
      * entry point for views on subpages of "Changes" menu item
      *
@@ -43,15 +44,39 @@ require(['models/casestudy', 'models/gdsemodel', 'collections/gdsecollection',
             strategy: strategy
         })
 
+        if (flowTargetControlView) flowTargetControlView.close();
+        var flowTargetControlView = new FlowTargetControlView({
+            caseStudy: caseStudy,
+            el: document.getElementById('flow-target-control'),
+            keyflowId: keyflow.id,
+            template: 'flow-target-control-template',
+            strategy: strategy
+        })
+
         loader = new utils.Loader(document.getElementById('content'), {disable: true})
-        // lazy way to reset the button to build graph
-        var btn = document.getElementById('calculate-strategy'),
-            note = document.getElementById('graph-note'),
-            clone = btn.cloneNode(true);
-        note.innerHTML = keyflow.get('graph_build') || '-';
-        btn.parentNode.replaceChild(clone, btn);
-        clone.addEventListener('click', function(){
-            loader.activate();
+
+        // lazy way to reset the buttons by cloning (avoid multiple event listeners)
+        var calcBtn = document.getElementById('calculate-strategy'),
+            statusBtn = document.getElementById('show-status'),
+            statusDiv = document.getElementById('graph-status'),
+            calcClone = calcBtn.cloneNode(true),
+            statusClone = statusBtn.cloneNode(true);
+        calcBtn.parentNode.replaceChild(calcClone, calcBtn);
+        statusBtn.parentNode.replaceChild(statusClone, statusBtn);
+
+        function setStatus(){
+            var status = strategy.get('status');
+            statusClone.className = (status === 0) ? 'btn btn-primary' : (status === 2) ? 'btn btn-secondary' : 'btn btn-tertiary'
+            statusDiv.innerHTML = strategy.get('status_text');
+            //calcClone.disabled = (status === 1) ? true: false;
+        }
+        setStatus();
+
+        statusClone.addEventListener('click', function(){
+            strategy.fetch({ success: setStatus });
+        });
+
+        calcClone.addEventListener('click', function(){
             var url = '/api/casestudies/{0}/keyflows/{1}/strategies/{2}/build_graph/'.format(caseStudy.id, keyflow.id, strategy.id);
             fetch(url).then(
                 function(response) {
@@ -62,12 +87,13 @@ require(['models/casestudy', 'models/gdsemodel', 'collections/gdsecollection',
                     loader.deactivate();
                     return response.json();
                 }).then(function(json) {
-                    note.innerHTML = json['graph_build'];
-                    alert(gettext('Graph was successfully build.'));
-                }).catch(function(error) {
-                    loader.deactivate();
-            });
-
+                    strategy.set('status', json['status']);
+                    strategy.set('status_text', json['status_text']);
+                    setStatus();
+                }).catch(//sth to catch?
+                );
+            strategy.fetch({ success: setStatus });
+            alert(gettext('Calculation started. Please wait till it is finished (check Status).'));
         })
     }
 
@@ -110,7 +136,7 @@ require(['models/casestudy', 'models/gdsemodel', 'collections/gdsecollection',
                     loader.deactivate();
                     return response.json();
                 }).then(function(json) {
-                    note.innerHTML = json['graph_build'];
+                    note.innerHTML = json['graph_date'];
                     alert(gettext('Graph was successfully build.'));
                 }).catch(function(error) {
                     alert(error);

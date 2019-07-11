@@ -241,15 +241,18 @@ var BaseView = Backbone.View.extend(
         itemContent.innerHTML = template({ name: text });
         panelItem.appendChild(itemContent);
 
-        if (overlayText){
+        if (overlayText != null){
             var overlay = panelItem.querySelector('.overlay');
             overlay.style.display = 'inline-block';
             overlay.innerHTML = overlayText;
-            // make space for the overlay
-            panelItem.querySelector('label').style.paddingLeft = '30px';
         };
 
-        if (popoverText){
+        // make space for the overlay and buttons
+        if (showButtons || overlayText) {
+            panelItem.querySelector('label').style.maxWidth = 'calc(100% - 50px)';
+        }
+
+        if (popoverText != null){
             $(panelItem).popover({
                 trigger: "hover",
                 container: 'body',

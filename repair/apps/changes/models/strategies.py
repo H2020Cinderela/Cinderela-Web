@@ -25,6 +25,11 @@ class Strategy(GDSEModel):
                                                  null=True)
     solutions = models.ManyToManyField(Solution,
                                        through='SolutionInStrategy')
+    # ToDo: enum for status
+    # 0 - no calculation, 1 - calculating, 2 - ready
+    status = models.IntegerField(default=0)
+    # calculation started resp. finished
+    date = models.DateTimeField(null=True)
 
 
 class SolutionInStrategy(GDSEModel):
@@ -33,10 +38,12 @@ class SolutionInStrategy(GDSEModel):
     '''
     solution = models.ForeignKey(Solution, on_delete=PROTECT_CASCADE)
     strategy = models.ForeignKey(Strategy,
-                                 on_delete=PROTECT_CASCADE)
+                                 on_delete=PROTECT_CASCADE,
+                                 related_name='solutioninstrategy')
     participants = models.ManyToManyField(Stakeholder)
     note = models.TextField(blank=True, null=True)
-    geom = models.GeometryCollectionField(verbose_name='geom', null=True)
+    geom = models.GeometryCollectionField(verbose_name='geom', srid=4326,
+                                          null=True)
 
     # order of calculation, lowest first
     priority = models.IntegerField(default=0)
@@ -63,7 +70,7 @@ class ImplementationQuantity(GDSEModel):
                                        on_delete=models.CASCADE,
                                        related_name='implementation_quantity')
     question = models.ForeignKey(ImplementationQuestion,
-                                 on_delete=PROTECT_CASCADE)
+                                 on_delete=models.CASCADE)
     value = models.FloatField()
 
 
@@ -79,7 +86,7 @@ def trigger_implementationquantity_sii(sender, instance,
         for question in solution.question.all():
             new, is_created = ImplementationQuantity.objects.\
                 get_or_create(implementation=sii, question=question,
-                              value=question.min_value)
+                              value=9958.0)
             if is_created:
                 new.save()
 
