@@ -237,7 +237,7 @@ class FractionFlow(Flow):
                                     on_delete=models.SET_NULL,
                                     related_name='f_pub')
     avoidable = models.BooleanField(default=True)
-    hazardous = models.BooleanField(default=True)
+    hazardous = models.BooleanField(default=False)
 
     # composition related information
     nace = models.CharField(max_length=255, blank=True)
@@ -249,13 +249,18 @@ class FractionFlow(Flow):
 
 
 class StrategyFractionFlow(GDSEModel):
-    strategy = models.ForeignKey(Strategy,
-                             on_delete=models.CASCADE,
-                             related_name='f_fractionflowstrategy')
-    fractionflow = models.ForeignKey(FractionFlow,
-                                     on_delete=models.CASCADE,
+    strategy = models.ForeignKey(Strategy, on_delete=models.CASCADE,
+                                 related_name='f_fractionflowstrategy')
+    fractionflow = models.ForeignKey(FractionFlow, on_delete=models.CASCADE,
                                      related_name='f_strategyfractionflow')
     amount = models.FloatField(default=0)
-    material = models.ForeignKey(Material, null=True,
-                                 on_delete=PROTECT_CASCADE,
+    material = models.ForeignKey(Material, null=True, on_delete=PROTECT_CASCADE,
                                  related_name='f_strategyfractionflowmaterials')
+    process = models.ForeignKey(
+        Process, null=True, on_delete=PROTECT_CASCADE,
+        related_name='f_strategyfractionflowprocesses')
+    waste = models.BooleanField(default=False)
+    hazardous = models.BooleanField(default=False)
+
+    class Meta(GDSEModel.Meta):
+        unique_together = ('strategy', 'fractionflow')

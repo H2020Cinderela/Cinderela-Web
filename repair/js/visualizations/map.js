@@ -208,14 +208,19 @@ define([
             }
 
             function labelStyle(feature, resolution) {
+                var fontSize = options.labelFontSize || '15px';
+                var text = feature.get('label');
+                if (_this.labelZoom && _this.map.getView().getZoom() < _this.labelZoom)
+                    text = '';
                 return new ol.style.Text({
-                    font: '15px Open Sans,sans-serif',
+                    font: fontSize + ' Open Sans,sans-serif',
                     fill: new ol.style.Fill({ color: options.labelColor || '#4253f4' }),
                     stroke: new ol.style.Stroke({
                         color: options.labelOutline || 'white', width: 3
                     }),
-                    text: feature.get('label'),
-                    overflow: false
+                    text: text,
+                    overflow: false,
+                    offsetY: options.labelOffset || 0
                 })
             }
 
@@ -425,6 +430,14 @@ define([
         getFeatures(layername){
             var layer = this.layers[layername];
             return layer.getSource().getFeatures();
+        }
+
+        addFeatures(layername, features){
+            var layer = this.layers[layername],
+                source = layer.getSource();
+            features.forEach(function(feature){
+                source.addFeature(feature);
+            })
         }
 
         getFeature(layername, id){
@@ -820,6 +833,9 @@ define([
                             layer.getSource().addFeature(geojsonFormat.readFeature(intersection));
                         }
                     });
+                    if (options.onDrawEnd){
+                        options.onDrawEnd(features);
+                    }
                 });
             }
 

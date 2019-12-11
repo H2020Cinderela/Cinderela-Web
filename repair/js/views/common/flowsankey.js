@@ -1,9 +1,9 @@
 define(['views/common/baseview', 'underscore', 'visualizations/sankey',
         'collections/gdsecollection', 'd3', 'app-config', 'save-svg-as-png',
-        'file-saver', 'utils/utils'],
+        'file-saver', 'openlayers', 'utils/utils'],
 
 function(BaseView, _, Sankey, GDSECollection, d3, config, saveSvgAsPng,
-         FileSaver, utils, Slider){
+         FileSaver, ol, utils){
 
 /**
 *
@@ -50,6 +50,7 @@ var FlowSankeyView = BaseView.extend(
         this.originLevel = options.originLevel;
         this.destinationLevel = options.destinationLevel;
         this.flows = options.flows;
+        this.renderStocks = (options.renderStocks == null) ? true: options.renderStocks;
         this.showRelativeComposition = (options.showRelativeComposition == null) ? true : options.showRelativeComposition;
         this.forceSignum = options.forceSignum || false;
         this.stretchInput = this.el.querySelector('#sankey-stretch');
@@ -69,6 +70,7 @@ var FlowSankeyView = BaseView.extend(
         'click .export-csv': 'exportCSV',
         'click .select-all': 'selectAll',
         'click .deselect-all': 'deselectAll',
+        'change #sankey-dblclick': 'changeDblClick',
         'change #sankey-alignment': 'alignSankey',
         'change #sankey-scale': 'scale',
         'change #sankey-stretch': 'stretch'
@@ -95,6 +97,8 @@ var FlowSankeyView = BaseView.extend(
         }
         this.el.classList.remove('disabled');
         this.sankeyDiv = div;
+
+        var dblclkCheck = this.el.querySelector('#sankey-dblclick');
         this.sankey = new Sankey({
             height: height,
             width: width,
@@ -103,7 +107,9 @@ var FlowSankeyView = BaseView.extend(
             language: config.session.get('language'),
             selectable: true,
             gradient: false,
-            stretchFactor: (this.stretchInput) ? this.stretchInput.value: 1
+            stretchFactor: (this.stretchInput) ? this.stretchInput.value: 1,
+            selectOnDoubleClick: (dblclkCheck) ? dblclkCheck.checked : false,
+            forceSignum: this.forceSignum
         })
 
         // redirect the event with same properties
@@ -125,17 +131,27 @@ var FlowSankeyView = BaseView.extend(
         //this.render(this.transformedData);
     },
 
+    changeDblClick: function(evt){
+        this.deselectAll();
+        var checked = evt.target.checked;
+        this.sankey.selectOnDoubleClick = checked;
+        this.sankey.render(this.transformedData);
+    },
+
     alignSankey: function(evt){
+        this.deselectAll();
         this.sankey.align(evt.target.value);
         this.sankey.render(this.transformedData);
     },
 
     scale: function(){
+        this.deselectAll();
         this.transformedData = this.transformData(this.flows);
         this.render(this.transformedData);
     },
 
     stretch: function(evt){
+        this.deselectAll();
         this.sankey.stretch(evt.target.value)
         this.sankey.render(this.transformedData)
     },
@@ -168,7 +184,8 @@ var FlowSankeyView = BaseView.extend(
             var id = node.id,
                 name = node.name,
                 level = node.level,
-                code = node.code || node.nace || node.activity__nace;
+                code = node.code || node.nace || node.activity__nace,
+                geom = node.geom,
                 key = level + id;
             if ((_this.anonymize) && (level === 'actor'))
                 name = gettext('Actor');
@@ -177,7 +194,7 @@ var FlowSankeyView = BaseView.extend(
                 return indices[key];
             idx += 1;
             var color = node.color || utils.colorByName(name);
-            nodes.push({ id: id, name: name + ' (' + code + ')', color: color, code: code });
+            nodes.push({ id: id, name: name + ' (' + code + ')', color: color, code: code, geom: geom });
             indices[key] = idx;
             return idx;
         }
@@ -195,16 +212,14 @@ var FlowSankeyView = BaseView.extend(
                 fractions = flow.get('materials'),
                 totalAmount = flow.get('amount');
             fractions.forEach(function(material){
-                var amount = (material.value != null) ? material.value : material.amount || material.statusquo_amount;
+                var amount = (material.value != null) ? material.value: material.amount;
                 if (amount == 0) return;
-                if (_this.forceSignum && amount >= 0)
-                    text += '+';
                 if (_this.showRelativeComposition){
                     fraction = amount / totalAmount,
                     value = Math.round(fraction * 100000) / 1000;
-                    text += _this.format(value) + '%';
+                    text += _this.format(value, _this.forceSignum) + '%';
                 } else {
-                    text += _this.format(amount) + ' ' + gettext('t/year');
+                    text += _this.format(amount, _this.forceSignum) + ' ' + gettext('t/year');
                 }
                 text += ' ' + material.name
                 if (material.avoidable) text += ' <i>' + gettext('avoidable') +'</i>';
@@ -227,7 +242,6 @@ var FlowSankeyView = BaseView.extend(
             maxAmount = Math.max(...amounts),
             max = 10000,
             normFactor = max / maxAmount;
-
         flows.forEach(function(flow){
             var value = flow.get('amount');
             // skip flows with zero amount
@@ -235,21 +249,21 @@ var FlowSankeyView = BaseView.extend(
             var origin = flow.get('origin'),
                 destination = flow.get('destination'),
                 isStock = flow.get('stock');
+            if (isStock && !_this.renderStocks) return;
             if (!isStock && origin.id == destination.id) {
                 console.log('Warning: self referencing cycle at node ' + origin.name);
                 return;
             }
             function normalize(v){
-                return Math.log2(1 + v * normFactor);
+                var normed = Math.log2(1 + Math.abs(v) * normFactor);
+                if (v < 0) normed *= -1;
+                return normed;
             }
             var source = mapNode(origin),
                 target = (!isStock) ? mapNode(destination) : addStock();
             var crepr = compositionRepr(flow),
                 amount = flow.get('amount'),
                 value = (norm === 'log')? normalize(amount): Math.round(amount);
-
-            if (_this.forceSignum && amount >= 0)
-                amount = '+' + amount.toLocaleString(this.language);
             links.push({
                 id: flow.id,
                 originalData: flow,
@@ -305,26 +319,37 @@ var FlowSankeyView = BaseView.extend(
     exportCSV: function(){
         if (!this.transformedData) return;
 
-        var header = [gettext('origin'), gettext('origin_code'),
-                      gettext('destination'), gettext('destination_code'),
-                      gettext('amount'), gettext('composition')],
+        var header = [gettext('origin'), gettext('origin') + '_code', gettext('origin') + '_wkt',
+                      gettext('destination'), gettext('destination') + '_code', gettext('destination') + '_wkt',
+                      gettext('amount (t/year)'), gettext('composition')],
             rows = [],
             _this = this;
         rows.push(header.join('\t'));
+        var geoJSON = new ol.format.GeoJSON(),
+            wkt = new ol.format.WKT();
+
+        function geomToWkt(geom){
+            var geometry = geoJSON.readGeometry(geom);
+            return wkt.writeGeometry(geometry)
+        }
+
         this.transformedData.links.forEach(function(link){
             var origin = link.source,
                 destination = link.target,
                 originName = origin.name,
                 destinationName = (!link.isStock) ? destination.name : gettext('Stock'),
-                amount = _this.format(link.amount) + ' ' + link.units,
+                amount = _this.format(link.amount, _this.forceSignum),
                 composition = link.composition;
 
-            if (_this.forceSignum && amount >= 0)
-                amount = '-' + amount;
             var originCode = origin.code,
-                destinationCode = (destination) ? destination.code: '';
+                destinationCode = (destination) ? destination.code: '',
+                originWkt = '',
+                destinationWkt = '';
 
-            var row = [originName, originCode, destinationName, destinationCode, amount, composition];
+            var originWkt = (origin.geom) ? geomToWkt(origin.geom) : '',
+                destinationWkt = (destination.geom) ? geomToWkt(destination.geom) : '';
+
+            var row = [originName, originCode, originWkt, destinationName, destinationCode, destinationWkt, amount, composition];
             rows.push(row.join('\t'));
         });
         var text = rows.join('\r\n');

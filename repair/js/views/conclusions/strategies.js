@@ -20,7 +20,7 @@ function(_, BaseView, GDSECollection, Map, ol, chroma){
         * @param {HTMLElement} options.el                      element the view will be rendered in
         * @param {string} options.template                     id of the script element containing the underscore template to render this view
         * @param {module:models/CaseStudy} options.caseStudy   the casestudy of the keyflow
-        * @param {module:models/CaseStudy} options.keyflowId   the keyflow the objectives belong to
+        * @param {module:models/CaseStudy} options.keyflow     the keyflow the objectives belong to
         *
         * @constructs
         * @see http://backbonejs.org/#View
@@ -30,13 +30,12 @@ function(_, BaseView, GDSECollection, Map, ol, chroma){
             var _this = this;
             this.template = options.template;
             this.caseStudy = options.caseStudy;
-            this.keyflowId = options.keyflowId;
-            this.keyflowName = options.keyflowName;
+            this.keyflow = options.keyflow;
             this.users = options.users;
 
             this.solutions = new GDSECollection([], {
                 apiTag: 'solutions',
-                apiIds: [this.caseStudy.id, this.keyflowId],
+                apiIds: [this.caseStudy.id, this.keyflow.id],
                 comparator: 'implementation_count'
             });
             this.strategies = options.strategies;
@@ -46,12 +45,12 @@ function(_, BaseView, GDSECollection, Map, ol, chroma){
             });
             this.activities = new GDSECollection([], {
                 apiTag: 'activities',
-                apiIds: [this.caseStudy.id, this.keyflowId],
+                apiIds: [this.caseStudy.id, this.keyflow.id],
                 comparator: 'name'
             });
             this.activityGroups = new GDSECollection([], {
                 apiTag: 'activitygroups',
-                apiIds: [this.caseStudy.id, this.keyflowId],
+                apiIds: [this.caseStudy.id, this.keyflow.id],
                 comparator: 'name'
             });
 
@@ -66,7 +65,7 @@ function(_, BaseView, GDSECollection, Map, ol, chroma){
             this.strategies.forEach(function(strategy){
                 var implementations = new GDSECollection([], {
                     apiTag: 'solutionsInStrategy',
-                    apiIds: [_this.caseStudy.id, _this.keyflowId, strategy.id]
+                    apiIds: [_this.caseStudy.id, _this.keyflow.id, strategy.id]
                 });
                 promises.push(implementations.fetch({
                     success: function (){
@@ -99,8 +98,13 @@ function(_, BaseView, GDSECollection, Map, ol, chroma){
                 _this.solutions.forEach(function(solution){
                     var questions = new GDSECollection([], {
                         apiTag: 'questions',
-                        apiIds: [_this.caseStudy.id, _this.keyflowId, solution.id]
+                        apiIds: [_this.caseStudy.id, _this.keyflow.id, solution.id]
                     });
+                    solution.areas = new GDSECollection([], {
+                        apiTag: 'possibleImplementationAreas',
+                        apiIds: [_this.caseStudy.id, _this.keyflow.id, solution.id]
+                    });
+                    promises.push(solution.areas.fetch());
                     promises.push(questions.fetch({
                         success: function (){
                             _this.questions[solution.id] = questions;
@@ -160,6 +164,8 @@ function(_, BaseView, GDSECollection, Map, ol, chroma){
 
             // quantity values per user and question
             this.quantities = {};
+            // drawings per user and possible implementation area
+            this.implementationAreas = {};
             var i = 0;
             this.users.forEach(function(user){
 
@@ -211,6 +217,15 @@ function(_, BaseView, GDSECollection, Map, ol, chroma){
                             _this.quantities[user.id][quantity.question] = [];
                         _this.quantities[user.id][quantity.question].push(quantity.value);
                     });
+
+                    // memorize drawings inputs by users
+                    implementation.get('areas').forEach(function(area){
+                        if (!_this.implementationAreas[user.id]) _this.implementationAreas[user.id] = {};
+                        if (!_this.implementationAreas[user.id][area.possible_implementation_area])
+                            _this.implementationAreas[user.id][area.possible_implementation_area] = [];
+                        _this.implementationAreas[user.id][area.possible_implementation_area].push(area.geom);
+                    });
+
                     // memorize activities directly affected by user strategies
                     solution.get('affected_activities').forEach(function(activityId){
                         var users = _this.directlyAffectedActivities[activityId];
@@ -300,18 +315,15 @@ function(_, BaseView, GDSECollection, Map, ol, chroma){
 
         // Step 5
         drawImplementations: function(){
-            var solution = this.solutions.get(this.solutionSelect.value),
-                possImplArea = solution.get('possible_implementation_area'),
+            var selectedOption = this.solutionSelect.options[this.solutionSelect.selectedIndex],
+                possibleAreaId = selectedOption.value,
+                solution = this.solutions.get(selectedOption.dataset.solution),
+                possImplArea = solution.areas.get(possibleAreaId).get('geom'),
                 focusarea = this.caseStudy.get('properties').focusarea,
                 _this = this;
 
-            if (possImplArea) {
-                var poly = new ol.geom.MultiPolygon(possImplArea.coordinates);
-                this.strategiesMap.centerOnPolygon(poly, { projection: this.projection });
-            } else if (focusarea){
-                var poly = new ol.geom.MultiPolygon(focusarea.coordinates);
-                this.strategiesMap.centerOnPolygon(poly, { projection: this.projection });
-            };
+            var poly = new ol.geom.MultiPolygon(possImplArea.coordinates);
+            this.strategiesMap.centerOnPolygon(poly, { projection: this.projection });
 
             this.users.forEach(function(user){
                 _this.strategiesMap.clearLayer('user' + user.id);
@@ -322,12 +334,12 @@ function(_, BaseView, GDSECollection, Map, ol, chroma){
                     implementations = _this.implementations[strategy.id].where({solution: solution.id}),
                     userName = user.get('alias') || user.get('name');
                 implementations.forEach(function(solutionImpl){
-                    var implAreas = solutionImpl.get('geom');
-                    // implementation areas are collections
-                    if (!implAreas || implAreas.geometries.length == 0) return;
-                    implAreas.geometries.forEach(function(geom){
+                    var geometries = _this.implementationAreas[user.id][possibleAreaId];
+                    if (!geometries) return;
+                    geometries.forEach(function(geom){
+                        if (!geom) return;
                         _this.strategiesMap.addGeometry(geom.coordinates, {
-                            projection: 'EPSG:3857',
+                            projection: 'EPSG:4326',
                             layername: 'user' + user.id,
                             type: geom.type,
                             tooltip: userName
@@ -343,7 +355,7 @@ function(_, BaseView, GDSECollection, Map, ol, chroma){
                 table = this.el.querySelector('#solution-question-table'),
                 header = table.createTHead().insertRow(0),
                 fTh = document.createElement('th');
-            fTh.innerHTML = gettext('Solutions for key flow <i>' + this.keyflowName + '</i>');
+            fTh.innerHTML = gettext('Solutions for key flow <i>' + this.keyflow.get('name') + '</i>');
             header.appendChild(fTh);
             var userColumns = [];
             this.users.forEach(function(user){
@@ -371,7 +383,10 @@ function(_, BaseView, GDSECollection, Map, ol, chroma){
                 var row = table.insertRow(-1),
                     text = solution.get('name'),
                     questions = _this.questions[solution.id];
-                var solItem = _this.panelItem(text, { overlayText: '0x' });
+                var solItem = _this.panelItem(text, {
+                        overlayText: '0x',
+                        popoverText: text
+                    });
                 solItem.style.maxWidth = '600px';
                 row.insertCell(0).appendChild(solItem);
                 _this.users.forEach(function(user){
@@ -394,8 +409,9 @@ function(_, BaseView, GDSECollection, Map, ol, chroma){
                         if (!_this.quantities[user.id]) return;
                         var values = _this.quantities[user.id][question.id],
                             isAbsolute = question.get('is_absolute');
+                        if (!values) return;
                         values.forEach(function(value){
-                            var v = (isAbsolute) ? value + ' ' + gettext('t/year') : parseFloat(value) * 100 + '%',
+                            var v = (isAbsolute) ? value + ' ' + gettext('t/year') : parseFloat(value) + '%',
                                 t = '<b>' + (user.get('alias') || user.get('name')) + '</b><br><i>' + question.get('question') + '</i>:<br>' + v,
                                 panelItem = _this.panelItem(v, { popoverText: t });
                             panelItem.style.float = 'left';
@@ -421,8 +437,8 @@ function(_, BaseView, GDSECollection, Map, ol, chroma){
                 ifTh = document.createElement('th'),
                 levelSelect = this.el.querySelector('select[name="level-select"]'),
                 gName = (levelSelect.value == 'activity') ? 'Activities' : 'Activity groups';
-            fTh.innerHTML = gName + ' ' + gettext('directly affected by user strategies <br> in key flow <i>' + this.keyflowName + '</i>');
-            ifTh.innerHTML = gName + ' ' + gettext('indirectly affected by user strategies <br> in key flow <i>' + this.keyflowName + '</i>');
+            fTh.innerHTML = gName + ' ' + gettext('directly affected by user strategies <br> in key flow <i>' + this.keyflow.get('name') + '</i>');
+            ifTh.innerHTML = gName + ' ' + gettext('indirectly affected by user strategies <br> in key flow <i>' + this.keyflow.get('name') + '</i>');
             directHeader.appendChild(fTh);
             indirectHeader.appendChild(ifTh);
             var userColumns = [];
@@ -439,7 +455,10 @@ function(_, BaseView, GDSECollection, Map, ol, chroma){
             function addRow(table, node, userSet, totalCount){
                 var row = table.insertRow(-1),
                     text = node.get('name');
-                var panelItem = _this.panelItem(text, { overlayText: totalCount + 'x' });
+                var panelItem = _this.panelItem(text, {
+                        overlayText: totalCount + 'x',
+                        popoverText: text
+                    });
                 panelItem.style.width = '500px';
                 row.insertCell(0).appendChild(panelItem);
                 _this.users.forEach(function(user){
@@ -540,7 +559,7 @@ function(_, BaseView, GDSECollection, Map, ol, chroma){
             stakeholders.forEach(function(stakeholder){
                 var row = table.insertRow(-1),
                     text = stakeholder.get('name');
-                var panelItem = _this.panelItem(text);
+                var panelItem = _this.panelItem(text, {popoverText: text});
                 panelItem.style.maxWidth = '500px';
                 row.insertCell(0).appendChild(panelItem);
 

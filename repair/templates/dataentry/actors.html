@@ -17,7 +17,7 @@
         </select>
       </div>
       <div class="row">
-        {% trans "Inclusion in Casestudy" %}
+        {% trans "Inclusion in case study" %}
         <select class="form-control" name="included-filter" id="included-filter-select">
           <option value="0">{% trans "show all" %}</option>
           <option value="1">{% trans "show included only" %}</option>
@@ -176,7 +176,7 @@
         </button>
       </div>
     </div>
-    <div id="location-modal" class="modal fade" role="dialog">
+    <div id="location-modal" data-backdrop="static" class="modal fade" role="dialog">
       <div class="modal-dialog modal-lg">
         <!-- Modal content-->
         <div class="modal-content col-md-12">
