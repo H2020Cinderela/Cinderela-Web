@@ -63,8 +63,8 @@ class ActivityGroupFactory(NodeFactory):
 class ActivityFactory(NodeFactory):
     class Meta:
         model = models.Activity
-    name = factory.Sequence(lambda n: "Activity #%s" % n)
-    nace = '52.Retail'
+    name = factory.Sequence(lambda n: f'Activity #{n}')
+    nace = factory.Sequence(lambda n: f'E-{n}')
     activitygroup = factory.SubFactory(ActivityGroupFactory)
 
 
@@ -210,10 +210,11 @@ class ProductFractionFactory(DjangoModelFactory):
 class FractionFlowFactory(FlowFactory):
     class Meta:
         model = models.FractionFlow
+    flow = factory.SubFactory(Actor2ActorFactory)
+    stock = factory.SubFactory(ActorStockFactory)
     origin = factory.SubFactory(ActorFactory)
     destination = factory.SubFactory(ActorFactory)
     material = factory.SubFactory(MaterialFactory)
     composition_name = factory.Sequence(lambda n: "Composition #%s" % n)
     nace = '52.Retail'
     amount = 0.0
-    

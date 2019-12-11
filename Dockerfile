@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 FROM circleci/python:3.6-stretch-node-browsers
+=======
+FROM maxboh/docker-circleci-node-miniconda-gdal:graph_tool_stretch
+>>>>>>> master-upstream
 
 ENV CIRCLECIPATH $PATH
 

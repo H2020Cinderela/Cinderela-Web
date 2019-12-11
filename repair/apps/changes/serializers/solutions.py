@@ -1,12 +1,21 @@
 from rest_framework import serializers
 from rest_framework_nested.serializers import NestedHyperlinkedModelSerializer
+from django.contrib.gis.db.models.functions import MakeValid, GeoFunc
+from django.core.exceptions import ValidationError
+from django.db.models import Q
+from django.utils.translation import gettext as _
 
-from repair.apps.asmfa.models import Activity
+from repair.apps.asmfa.models import Activity, Actor
 from repair.apps.changes.models import (SolutionCategory,
                                         Solution,
                                         ImplementationQuestion,
+                                        SolutionInStrategy,
+                                        ImplementationQuantity,
                                         SolutionPart,
-                                        AffectedFlow
+                                        AffectedFlow,
+                                        PossibleImplementationArea,
+                                        Scheme,
+                                        FlowReference
                                         )
 
 from repair.apps.login.serializers import (InCasestudyField,
@@ -17,6 +26,10 @@ from repair.apps.login.serializers import (InCasestudyField,
                                            IDRelatedField)
 from repair.apps.statusquo.models import SpatialChoice
 from repair.apps.utils.serializers import EnumField
+
+
+class CollectionExtract(GeoFunc):
+    function='ST_CollectionExtract'
 
 
 class SolutionCategorySerializer(CreateWithUserInCasestudyMixin,
@@ -62,6 +75,65 @@ class ImplementationQuestionSerializer(SolutionDetailCreateMixin,
                         'select_values': {'required': False}}
 
 
+class PossibleImplementationAreaSerializer(SolutionDetailCreateMixin,
+                                           NestedHyperlinkedModelSerializer):
+    solution = IDRelatedField(read_only=True)
+    edit_mask = serializers.ReadOnlyField()
+    affected_actors = serializers.SerializerMethodField()
+    parent_lookup_kwargs = {
+        'casestudy_pk': 'solution__solution_category__keyflow__casestudy__id',
+        'keyflow_pk': 'solution__solution_category__keyflow__id',
+        'solution_pk': 'solution__id'
+    }
+
+    class Meta:
+        model = PossibleImplementationArea
+        fields = ('url', 'id', 'solution', 'question', 'geom', 'edit_mask',
+                  'affected_actors')
+
+    def create(self, validated_data):
+        instance = super().create(validated_data)
+        return self.makevalid(instance)
+
+    def update(self, instance, validated_data):
+        instance = super().update(instance, validated_data)
+        return self.makevalid(instance)
+
+    def makevalid(self, instance):
+        if not instance.geom.valid:
+            qs = PossibleImplementationArea.objects.filter(id=instance.id)
+            qs.update(geom=CollectionExtract(MakeValid('geom'), 3))
+            instance = qs[0]
+        return instance
+
+    def get_affected_actors(self, obj):
+        parts = obj.solution.solution_parts
+        #references = parts.values_list('flow_reference', flat=True)
+        #changes = parts.values_list('flow_changes', flat=True)
+        #flow_references = FlowReference.objects.filter(
+            #id__in=list(references) + list(changes))
+        #flow_references.filter(Q(origin_area=obj) | Q(destination_area=obj))
+
+        # should be a sufficient filter because the area is solution specific
+        flow_references = FlowReference.objects.filter(
+            Q(origin_area=obj) | Q(destination_area=obj))
+        affected_actors = []
+        for flow_reference in flow_references:
+            for area, activity in [
+                (flow_reference.origin_area,
+                 flow_reference.origin_activity),
+                (flow_reference.destination_area,
+                 flow_reference.destination_activity)]:
+                if area != obj:
+                    continue
+                actors = Actor.objects.filter(activity=activity)
+                actors = actors.filter(
+                    administrative_location__geom__intersects=obj.geom)
+                affected_actors.extend(actors.values_list('id', flat=True))
+        affected_actors = set(affected_actors)
+        return affected_actors
+
+
 class SolutionSerializer(CreateWithUserInCasestudyMixin,
                          NestedHyperlinkedModelSerializer):
     parent_lookup_kwargs = {
@@ -73,7 +145,6 @@ class SolutionSerializer(CreateWithUserInCasestudyMixin,
     currentstate_image = serializers.ImageField(required=False, allow_null=True)
     activities_image = serializers.ImageField(required=False, allow_null=True)
     effect_image = serializers.ImageField(required=False, allow_null=True)
-    edit_mask = serializers.ReadOnlyField()
     implementation_count = serializers.SerializerMethodField()
     affected_activities = serializers.SerializerMethodField()
 
@@ -83,16 +154,11 @@ class SolutionSerializer(CreateWithUserInCasestudyMixin,
                   'documentation', 'solution_category',
                   'activities_image',
                   'currentstate_image', 'effect_image',
-                  'possible_implementation_area',
-                  'edit_mask', 'implementation_count',
+                  'implementation_count',
                   'affected_activities'
                   )
         read_only_fields = ('url', 'id', )
         extra_kwargs = {
-            'possible_implementation_area': {
-                'allow_null': True,
-                'required': False,
-            },
             'description': {'required': False},
             'documentation': {'required': False},
         }
@@ -103,11 +169,12 @@ class SolutionSerializer(CreateWithUserInCasestudyMixin,
     def get_affected_activities(self, obj):
         parts = SolutionPart.objects.filter(solution=obj)
         activities = parts.values_list(
-            'implementation_flow_origin_activity__id',
-            'implementation_flow_destination_activity__id',
-            'new_target_activity__id',
-            'affected_flow__destination_activity__id',
-            'affected_flow__origin_activity__id'
+            'flow_reference__origin_activity__id',
+            'flow_reference__destination_activity__id',
+            'flow_changes__origin_activity__id',
+            'flow_changes__destination_activity__id',
+            'affected_flows__destination_activity__id',
+            'affected_flows__origin_activity__id'
         )
         activities = set([i for s in activities for i in s])
         try:
@@ -129,72 +196,187 @@ class AffectedFlowSerializer(CreateWithUserInCasestudyMixin,
         }
 
 
-class SolutionPartSerializer(CreateWithUserInCasestudyMixin,
-                             NestedHyperlinkedModelSerializer):
+class FlowReferenceSerializer(serializers.ModelSerializer):
+
+    origin_activity = IDRelatedField(
+        required=False, allow_null=True)
+    destination_activity = IDRelatedField(
+        required=False, allow_null=True)
+    material = IDRelatedField(
+        required=False, allow_null=True)
+    process = IDRelatedField(
+        required=False, allow_null=True)
+    origin_area = IDRelatedField(
+        required=False, allow_null=True)
+    destination_area = IDRelatedField(
+        required=False, allow_null=True)
+
+    class Meta:
+        model = FlowReference
+        fields = ('origin_activity', 'destination_activity',
+                  'material', 'include_child_materials', 'process',
+                  'origin_area', 'destination_area', 'waste', 'hazardous')
+        extra_kwargs = {
+            'waste': {'required': False},
+            'hazardous': {'required': False}
+        }
+
+
+class SolutionPartSerializer(serializers.ModelSerializer):
     solution = IDRelatedField(read_only=True)
     parent_lookup_kwargs = {
         'casestudy_pk': 'solution__solution_category__keyflow__casestudy__id',
         'keyflow_pk': 'solution__solution_category__keyflow__id',
         'solution_pk': 'solution__id'
     }
-    implementation_flow_origin_activity = IDRelatedField(
-        required=False, allow_null=True)
-    implementation_flow_destination_activity = IDRelatedField(
-        required=False, allow_null=True)
-    implementation_flow_material = IDRelatedField(
-        required=False, allow_null=True)
-    implementation_flow_solution_part = IDRelatedField(
-        required=False, allow_null=True)
-    new_material = IDRelatedField(required=False, allow_null=True)
-    new_target_activity = IDRelatedField(required=False, allow_null=True)
-    implementation_flow_spatial_application = EnumField(enum=SpatialChoice)
-    affected_flows = AffectedFlowSerializer(source='affected_flow', many=True)
+    scheme = EnumField(enum=Scheme)
+    flow_reference = FlowReferenceSerializer(allow_null=True)
+    flow_changes = FlowReferenceSerializer(allow_null=True, required=False)
+
+    affected_flows = AffectedFlowSerializer(many=True)
     question = IDRelatedField(allow_null=True)
 
     # ToDo: serialize affected flows as part of this serializer
 
     class Meta:
         model = SolutionPart
-        fields = ('url', 'id', 'name', 'solution', 'documentation',
-                  'implements_new_flow', 'references_part',
-                  'implementation_flow_origin_activity',
-                  'implementation_flow_destination_activity',
-                  'implementation_flow_material',
-                  'implementation_flow_process',
-                  'implementation_flow_spatial_application',
-                  'implementation_flow_solution_part',
-                  'new_material',
+        fields = ('id', 'name', 'solution',
+                  'scheme', 'documentation',
+                  'flow_reference',
+                  'flow_changes',
                   'question', 'a', 'b',
-                  'keep_origin', 'new_target_activity',
-                  'map_request', 'priority',
+                  'priority',
                   'affected_flows',
                   'is_absolute',
                   )
         read_only_fields = ('url', 'id', 'solution')
         extra_kwargs = {
-            'implementation_question': {'null': True, 'required': False},
-            'keep_origin': {'required': False},
-            'map_request': {'required': False},
             'documentation': {'required': False, 'allow_blank': True},
-            'map_request': {'required': False, 'allow_blank': True},
             'is_absolute': {'required': False}
         }
+        depending_requirements = {
+            'scheme': {
+                'NEW': [
+                    'flow_changes__origin_activity',
+                    'flow_changes__destination_activity',
+                    'flow_changes__material'
+                ],
+                'MODIFICATION': [
+                    'flow_reference__origin_activity',
+                    'flow_reference__destination_activity',
+                    'flow_reference__material'
+                ],
+                'SHIFTDESTINATION': [
+                    'flow_reference__origin_activity',
+                    'flow_reference__destination_activity',
+                    'flow_reference__material',
+                    'flow_changes__destination_activity'
+                ],
+                'SHIFTORIGIN': [
+                    'flow_reference__origin_activity',
+                    'flow_reference__destination_activity',
+                    'flow_reference__material',
+                    'flow_changes__origin_activity'
+                ],
+                'PREPEND': [
+                    'flow_reference__origin_activity',
+                    'flow_reference__destination_activity',
+                    'flow_reference__material',
+                    'flow_changes__origin_activity'
+                ],
+                'APPEND': [
+                    'flow_reference__origin_activity',
+                    'flow_reference__destination_activity',
+                    'flow_reference__material',
+                    'flow_changes__destination_activity'
+                ],
+            }
+        }
+
+    def validate(self, data):
+        '''
+        check fields that are not defined as required but whose requirements
+        follows an internal logic depending on scheme
+        '''
+        request = self.context['request']
+
+        # patching single attributes is going unchecked
+        # ToDo: patching might mess up the logic
+        if request.method == 'PATCH' and 'scheme' not in data:
+            return data
+
+        scheme = data['scheme'].name
+        required = self.Meta.depending_requirements['scheme'][scheme]
+        errors = {}
+        # ToDo: return different message if field is not in data
+        error_msg = _('This field may not be blank.')
+        for required_field in required:
+            subfield = None
+            if '__' in required_field:
+                required_field, subfield = required_field.split('__')
+            value = data.get(required_field, None)
+            if not value:
+                errors[required_field] = error_msg
+            if subfield:
+                subvalue = value.get(subfield, '')
+                if not subvalue:
+                    errors[f'{required_field}__{subfield}'] = error_msg
+        question = data.get('question', None)
+        if not question and 'is_absolute' not in data:
+            errors['is_absolute'] = error_msg
+        if len(errors) > 0:
+            raise ValidationError(errors)
+        return data
+
+    def create(self, validated_data):
+        v = validated_data.copy()
+        v.pop('affected_flows', None)
+        v.pop('flow_reference', None)
+        v.pop('flow_changes', None)
+        instance = super().create(v)
+        return self.update(instance, validated_data)
 
     def update(self, instance, validated_data):
-        new_flows = validated_data.pop('affected_flow', None)
+        affected_flows = validated_data.pop('affected_flows', None)
+        flow_reference = validated_data.pop('flow_reference', None)
+        flow_changes = validated_data.pop('flow_changes', None)
+        question = validated_data.get('question', None)
         instance = super().update(instance, validated_data)
-        if new_flows:
+        if flow_reference:
+            if instance.flow_reference:
+                instance.flow_reference.delete()
+            ref_model = FlowReference(**flow_reference)
+            ref_model.save()
+            instance.flow_reference = ref_model
+        if flow_changes:
+            if instance.flow_changes:
+                instance.flow_changes.delete()
+            ref_model = FlowReference(**flow_changes)
+            ref_model.save()
+            instance.flow_changes = ref_model
+        if affected_flows:
             AffectedFlow.objects.filter(solution_part=instance).delete()
-            for f in new_flows:
+            for f in affected_flows:
                 flow = AffectedFlow(solution_part=instance, **f)
                 flow.save()
-        if instance.references_part:
-            instance.implementation_flow_origin_activity = None
-            instance.implementation_flow_destination_activity = None
-            instance.implementation_flow_material = None
-            instance.implementation_flow_process = None
-        else:
-            instance.implementation_flow_solution_part = None
+        if question:
+            implementations = SolutionInStrategy.objects.filter(
+                solution=instance.solution)
+            for implementation in implementations:
+                ex = ImplementationQuantity.objects.filter(
+                    implementation=implementation, question=question)
+                # create if not existing (in case questions were added after
+                # creation the implementation by user)
+                if len(ex) != 1:
+                    # workaround: old code produced duplicate quantities,
+                    # remove duplicates
+                    ex.delete()
+                    new = ImplementationQuantity(
+                        implementation=implementation,
+                        question=question,
+                        value=0
+                    )
+                    new.save()
         instance.save()
         return instance
 

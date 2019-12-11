@@ -39,11 +39,18 @@ class Sankey{
             .size([this.width * this.stretchFactor, this.height])
             .align(alignment);
         this.selectable = options.selectable;
+        this.forceSignum = options.forceSignum;
         this.gradient = options.gradient;
+        this.selectOnDoubleClick = options.selectOnDoubleClick || false;
     }
 
     format(d) {
-        return d.toLocaleString(this.language);
+        var formatted = d.toLocaleString(this.language);
+        if (this.forceSignum){
+            if (d > 0) formatted = '+' + formatted;
+            if (d == 0) formatted = '+-0';
+        }
+        return formatted;
     }
 
     align(alignment){
@@ -166,14 +173,15 @@ class Sankey{
             var inUnits, outUnits;
             for (var i = 0; i < d.targetLinks.length; i++) {
                 var link = d.targetLinks[i];
-                inSum += link.amount || link.value;
+                inSum += parseInt(link.amount || link.value);
                 if (!inUnits) inUnits = link.units; // in fact take first occuring unit, ToDo: can there be different units in the future?
             }
             for (var i = 0; i < d.sourceLinks.length; i++) {
                 var link = d.sourceLinks[i];
-                outSum += link.amount || link.value;
+                outSum += parseInt(link.amount || link.value);
                 if (!outUnits) outUnits = link.units;
             }
+
             var ins = "in: " + _this.format(inSum) + " " + (inUnits || ""),
                 out = "out: " + _this.format(outSum) + " " + (outUnits || "");
             var text = (d.text) ? d.text + '<br>': '';
@@ -208,6 +216,7 @@ class Sankey{
             .attr("width", this.width  * this.stretchFactor)
             .attr("height", this.height)
             .call(this.zoom)
+            .on("dblclick.zoom", null)
             .call(tipLinks)
             .call(tipNodes)
 
@@ -249,6 +258,8 @@ class Sankey{
             return d.color || d.source.color || '#000';
         }
 
+        var selectEvent = (this.selectOnDoubleClick) ? 'dblclick': 'click';
+
         var link = g.append("g").attr("class", "link-container")
             .selectAll(".link")
             .data(data.links)
@@ -271,7 +282,7 @@ class Sankey{
                 })
             .on('mouseover', function(d) { tipLinks.show(d, this); })
             .on('mouseout', function(d) { tipLinks.hide(d, this); })
-            .on('click', function(d){
+            .on(selectEvent, function(d){
                 if (_this.selectable){
                     var link = d3.select(this),
                         selected = link.classed("selected");

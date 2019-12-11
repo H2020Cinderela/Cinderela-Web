@@ -19,7 +19,7 @@ function(_, BaseView, GDSECollection, Muuri){
         * @param {HTMLElement} options.el                      element the view will be rendered in
         * @param {string} options.template                     id of the script element containing the underscore template to render this view
         * @param {module:models/CaseStudy} options.caseStudy   the casestudy of the keyflow
-        * @param {module:models/CaseStudy} options.keyflowId   the keyflow the objectives belong to
+        * @param {module:models/CaseStudy} options.keyflow   the keyflow the objectives belong to
         *
         * @constructs
         * @see http://backbonejs.org/#View
@@ -31,8 +31,7 @@ function(_, BaseView, GDSECollection, Muuri){
             this.caseStudy = options.caseStudy;
             this.aims = options.aims;
             this.objectives = options.objectives;
-            this.keyflowId = options.keyflowId;
-            this.keyflowName = options.keyflowName;
+            this.keyflow = options.keyflow;
             this.users = options.users;
 
             // ToDo: non-keyflow related collections obviously don't change when changing keyflow
@@ -63,7 +62,7 @@ function(_, BaseView, GDSECollection, Muuri){
             var _this = this;
                 objectivesTable = this.el.querySelector('#objectives-table'),
                 generalTable = this.el.querySelector('#general-objectives-table');
-            var title = gettext('Objectives for keyflow <i>' + this.keyflowName + '</i>');
+            var title = gettext('Objectives for keyflow <i>' + this.keyflow.get('name') + '</i>');
             this.renderObjTable(this.objectives, this.aims, objectivesTable, title);
             title = gettext('General objectives');
             this.renderObjTable(this.generalObjectives, this.generalAims, generalTable, title);
@@ -82,7 +81,7 @@ function(_, BaseView, GDSECollection, Muuri){
             this.users.forEach(function(user){
                 var name = user.get('alias') || user.get('name'),
                     th = document.createElement('th');
-                userColumns.push(user.id);
+                userColumns.push(user);
                 th.innerHTML = name;
                 header.appendChild(th);
                 var userObjectives = objectives.filterBy({'user': user.get('user')});
@@ -123,11 +122,14 @@ function(_, BaseView, GDSECollection, Muuri){
                     item = _this.createAimItem(aim, i);
                 row.insertCell(0).appendChild(item);
                 var aimRank = rankingMap[aim.id];
-                userColumns.forEach(function(userId){
+                userColumns.forEach(function(user){
                     var cell = row.insertCell(-1),
-                        rank = aimRank[userId];
+                        rank = aimRank[user.id],
+                        name = user.get('alias') || user.get('name');
                     if (rank) {
-                        var item = _this.panelItem('#' + rank);
+                        var item = _this.panelItem('#' + rank, {
+                            popoverText: name + ' ' + gettext('ranked') + ' <b>' + aim.get('text') + '</b> #' + rank
+                        });
                         item.style.width = '50px';
                         item.style.backgroundImage = 'none';
                         cell.appendChild(item);
@@ -142,10 +144,11 @@ function(_, BaseView, GDSECollection, Muuri){
         },
 
         createAimItem: function(aim, rank){
-            var desc = aim.get('description') || '';
+            var desc = aim.get('description') || '',
+                title = aim.get('text');
 
-            var panelItem = this.panelItem(aim.get('text'), {
-                popoverText: desc.replace(/\n/g, "<br/>"),
+            var panelItem = this.panelItem(title, {
+                popoverText: '<b>' + title + '</b><br>' + desc.replace(/\n/g, "<br/>"),
                 overlayText: '#' + rank
             })
             panelItem.style.maxWidth = '500px';
