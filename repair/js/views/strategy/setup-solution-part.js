@@ -1,9 +1,10 @@
 
 define(['views/common/baseview', 'underscore', 'collections/gdsecollection',
-        'models/gdsemodel', 'app-config', 'utils/utils', 'bootstrap',
-        'bootstrap-select'],
+        'models/gdsemodel', 'app-config', 'viewerjs', 'views/common/flowsankey',
+        'utils/utils', 'backbone', 'bootstrap', 'bootstrap-select',
+        'viewerjs/dist/viewer.css'],
 
-function(BaseView, _, GDSECollection, GDSEModel, config, utils){
+function(BaseView, _, GDSECollection, GDSEModel, config, Viewer, FlowSankeyView, utils, Backbone){
 /**
 *
 * @author Christoph Franke
@@ -28,14 +29,19 @@ var SolutionPartView = BaseView.extend(
     initialize: function(options){
         SolutionPartView.__super__.initialize.apply(this, [options]);
         var _this = this;
-        _.bindAll(this, 'toggleNewFlow');
         _.bindAll(this, 'toggleHasQuestion');
         _.bindAll(this, 'toggleAbsolute');
-        _.bindAll(this, 'toggleReferencePart');
         _.bindAll(this, 'addAffectedFlow');
-        _.bindAll(this, 'toggleNewMaterial');
+        _.bindAll(this, 'drawSankey');
+        _.bindAll(this, 'linkSelected');
+        _.bindAll(this, 'linkDeselected');
+        _.bindAll(this, 'checkFlowCount');
+        _.bindAll(this, 'checkNodeCount');
 
-        this.template = options.template;
+        this.template = 'solution-part-template';
+
+        this.caseStudy = options.caseStudy;
+        this.keyflowId = options.keyflowId;
 
         this.solutions = options.solutions;
         this.solutionParts = options.solutionParts;
@@ -44,6 +50,9 @@ var SolutionPartView = BaseView.extend(
         this.activityGroups = options.activityGroups;
         this.activities = options.activities;
         this.questions = options.questions;
+        this.areas = options.areas;
+        this.processes = options.processes;
+        this.scheme = options.scheme || this.model.get('scheme');
         this.render();
     },
 
@@ -51,6 +60,19 @@ var SolutionPartView = BaseView.extend(
     * dom events (managed by jquery)
     */
     events: {
+        'click button[name="check-flow-count"]': 'checkFlowCount'
+    },
+
+    /*
+    * scheme tags as keys and lists of [title, template, preview-image, example-image] as values
+    */
+    schemes: {
+        'modification': [gettext('Modify Flow'), 'modify-flow-template', 'schemes/modification.png', 'schemes/modification-example.png'],
+        'new': [gettext('New Flow'), 'new-flow-template', 'schemes/new.png', 'schemes/new-example.png'],
+        'shiftorigin': [gettext('Shift Origin'), 'shift-origin-template', 'schemes/shift-origin.png', 'schemes/shift-origin-example.png'],
+        'shiftdestination': [gettext('Shift Destination'), 'shift-destination-template', 'schemes/shift-destination.png', 'schemes/shift-destination-example.png'],
+        'prepend': [gettext('Prepend Flow'), 'prepend-flow-template', 'schemes/prepend.png', 'schemes/prepend-example.png'],
+        'append': [gettext('Append Flow'), 'append-flow-template', 'schemes/append.png', 'schemes/append-example.png']
     },
 
     /*
@@ -60,66 +82,134 @@ var SolutionPartView = BaseView.extend(
         var _this = this,
             html = document.getElementById(this.template).innerHTML,
             template = _.template(html);
-        this.el.innerHTML = template({});
 
-        this.nameInput = this.el.querySelector('input[name="name"]');
-        this.implNewFlowSelect = this.el.querySelector('select[name="impl-new-flow"]');
-        this.referencesPartSelect = this.el.querySelector('select[name="references-part"]');
-        this.solutionPartSelect = this.el.querySelector('select[name="referenced-part"]');
-        this.materialChangeSelect = this.el.querySelector('select[name="material-changes"]');
+        var scheme = this.scheme.toLowerCase(),
+            schemeAttr = this.schemes[scheme],
+            title = schemeAttr[0],
+            tmpl = schemeAttr[1],
+            schemepreview = schemeAttr[2],
+            schemeexample = schemeAttr[3];
+
+        this.el.innerHTML = template({
+            schemepreview: schemepreview,
+            schemeexample: schemeexample,
+            title: title
+        });
+
+        html = document.getElementById(tmpl).innerHTML;
+        template = _.template(html);
+        this.el.querySelector('#definition-content').innerHTML = template({});
+
+        this.sankeyWrapper = this.el.querySelector('.sankey-wrapper');
+        this.sankeyWrapper.addEventListener('linkSelected', this.linkSelected);
+        this.sankeyWrapper.addEventListener('linkDeselected', this.linkDeselected);
+        //this.sankeyWrapper.addEventListener('allDeselected', this.deselectAll);
+
+        this.viewer = new Viewer.default(this.el.querySelector('#scheme-preview'));
+        new Viewer.default(this.el.querySelector('#affected-flows-tab'));
+
+        this.nameInput = this.el.querySelector('input[name="part-name"]');
+
+        this.referenceOriginSelect = this.el.querySelector('select[name="reference-origin"]');
+        this.referenceDestinationSelect = this.el.querySelector('select[name="reference-destination"]');
+        this.referenceMaterialSelect = this.el.querySelector('div[name="reference-material"]');
+        this.referenceIncludeChildrenSelect = this.el.querySelector('input[name="include-child-materials"]')
+        this.referenceProcessSelect = this.el.querySelector('select[name="reference-process"]');
+        this.referenceOriginAreaSelect = this.el.querySelector('select[name="reference-origin-area"]');
+        this.referenceDestinationAreaSelect = this.el.querySelector('select[name="reference-destination-area"]');
+
+        this.newOriginSelect = this.el.querySelector('select[name="new-origin"]');
+        this.newDestinationSelect = this.el.querySelector('select[name="new-destination"]');
         this.newMaterialSelect = this.el.querySelector('div[name="new-material"]');
-        this.materialSelect = this.el.querySelector('div[name="material"]');
-        this.originSelect = this.el.querySelector('select[name="origin"]');
-        this.destinationSelect = this.el.querySelector('select[name="destination"]');
-        this.spatialOriginCheck = this.el.querySelector('input[name="origin-in-area"]');
-        this.spatialDestinationCheck = this.el.querySelector('input[name="destination-in-area"]');
+        this.newProcessSelect = this.el.querySelector('select[name="new-process"]');
+        this.newOriginAreaSelect = this.el.querySelector('select[name="new-origin-area"]');
+        this.newDestinationAreaSelect = this.el.querySelector('select[name="new-destination-area"]');
+        this.newWasteSelect = this.el.querySelector('select[name="new-waste"]');
+        this.newHazardousSelect = this.el.querySelector('select[name="new-hazardous"]');
+
+        this.affectedMaterialSelect = this.el.querySelector('div[name="affected-material"]');
+
         this.aInput = this.el.querySelector('input[name="a"]');
         this.bInput = this.el.querySelector('input[name="b"]');
         this.questionSelect = this.el.querySelector('select[name="question"]');
-        this.hasQuestionSelect = this.el.querySelector('select[name="has-question"]');
-        this.isAbsoluteSelect = this.el.querySelector('select[name="is-absolute"]');
+        this.hasQuestionRadios = this.el.querySelectorAll('input[name="has-question"]');
+        this.isAbsoluteRadios = this.el.querySelectorAll('input[name="is-absolute"]');
 
-        this.newTargetSelect = this.el.querySelector('select[name="new-target"]');
-        this.keepOriginInput = this.el.querySelector('select[name="keep-origin"]');
-        this.mapRequestArea = this.el.querySelector('textarea[name="map-request"]');
+        $(this.referenceOriginSelect).selectpicker({size: 8, liveSearch: true, width: 'fit'});
+        $(this.referenceDestinationSelect).selectpicker({size: 8, liveSearch: true, width: 'fit'});
+        $(this.newOriginSelect).selectpicker({size: 8, liveSearch: true, width: 'fit'});
+        $(this.newDestinationSelect).selectpicker({size: 8, liveSearch: true, width: 'fit'});
 
-        $(this.originSelect).selectpicker({size: 10, liveSearch: true, width: 'fit'});
-        $(this.destinationSelect).selectpicker({size: 10, liveSearch: true, width: 'fit'});
-        $(this.newTargetSelect).selectpicker({size: 10, liveSearch: true});
-        this.populateActivitySelect(this.originSelect);
-        // ToDo: null allowed for stocks?
-        this.populateActivitySelect(this.destinationSelect);
-        this.populateActivitySelect(this.newTargetSelect);
-        this.populateSolutionPartSelect();
+        this.populateActivitySelect(this.referenceOriginSelect);
+        this.populateActivitySelect(this.referenceDestinationSelect);
+        this.populateActivitySelect(this.newOriginSelect);
+        this.populateActivitySelect(this.newDestinationSelect);
+
+        this.populateAreaSelect(this.referenceOriginAreaSelect);
+        this.populateAreaSelect(this.referenceDestinationAreaSelect);
+        this.populateAreaSelect(this.newOriginAreaSelect);
+        this.populateAreaSelect(this.newDestinationAreaSelect);
+
+        var defaultText = (scheme == 'new') ? gettext('no specific process') : gettext('No change');
+
+        this.populateProcessSelect(this.referenceProcessSelect, {defaultOption: gettext('no specific process')});
+        this.populateProcessSelect(this.newProcessSelect, {defaultOption: defaultText});
+
         this.populateQuestionSelect();
         this.affectedDiv = this.el.querySelector('#affected-flows');
 
-        this.renderMatFilter(this.materialSelect);
-        this.renderMatFilter(this.newMaterialSelect);
+        this.renderMatFilter(this.referenceMaterialSelect, {showCount: true, countChildren: true});
+        this.renderMatFilter(this.newMaterialSelect, {defaultOption: defaultText});
+        this.renderMatFilter(this.affectedMaterialSelect, {onSelect: this.drawSankey, showCount: true, countChildren: true});
 
-        this.implNewFlowSelect.addEventListener('change', this.toggleNewFlow);
-        this.referencesPartSelect.addEventListener('change', this.toggleReferencePart);
-        this.hasQuestionSelect.addEventListener('change', function(){
-            _this.toggleHasQuestion();
-            _this.toggleAbsolute();
-        });
-        this.keepOriginInput.addEventListener('change', function(){
-            var label = (this.value == "true") ? gettext('destination'): gettext('origin');
-            _this.el.querySelector('div[name="origdestlabel"]').innerHTML = label;
-        })
-        this.isAbsoluteSelect.addEventListener('change', this.toggleAbsolute);
-        this.questionSelect.addEventListener('change', this.toggleAbsolute);
+        this.setInputs();
 
-        this.setInputs(this.model);
+        if (this.hasQuestion == null) this.hasQuestion = true;
+        this.hasQuestionRadios.forEach(function(radio){
+            radio.addEventListener('change', function(){
+                _this.hasQuestion = this.value == 'true';
+                _this.toggleHasQuestion();
+                _this.toggleAbsolute();
+            });
+        })
 
-        // at least one checkbox has to be checked
-        this.spatialOriginCheck.addEventListener('change', function(){
-            if (!this.checked) _this.spatialDestinationCheck.checked = true;
+        if (this.isAbsolute == null) this.isAbsolute = false;
+        this.isAbsoluteRadios.forEach(function(radio){
+            radio.addEventListener('change', function(){
+                _this.isAbsolute = this.value == 'true';
+                _this.toggleAbsolute();
+            });
         })
-        this.spatialDestinationCheck.addEventListener('change', function(){
-            if (!this.checked) _this.spatialOriginCheck.checked = true;
-        })
-        this.materialChangeSelect.addEventListener('change', this.toggleNewMaterial);
+        this.toggleHasQuestion();
+        this.toggleAbsolute();
+
+        // the first table is
+        var tables = this.el.querySelectorAll('table.part-table'),
+            changeTable = (scheme != 'new') ? tables[1] : tables[0];
+
+        if (scheme != 'new') {
+            refTable = tables[0];
+            this.addCount(gettext('Actor count'), refTable, function(label){
+                _this.checkNodeCount(label, _this.referenceOriginSelect, _this.referenceOriginAreaSelect);
+            }, 1)
+            this.addCount(gettext('Actor count'), refTable, function(label){
+                _this.checkNodeCount(label, _this.referenceDestinationSelect, _this.referenceDestinationAreaSelect);
+            }, 3)
+            this.addCount(gettext('Flow count'), refTable, function(label){
+                _this.checkFlowCount(label);
+            })
+        }
+
+        if (_this.newOriginSelect)
+            this.addCount(gettext('Actor count'), changeTable, function(label){
+                _this.checkNodeCount(label, _this.newOriginSelect, _this.newOriginAreaSelect);
+            }, 1)
+        if (_this.newDestinationSelect)
+            this.addCount(gettext('Actor count'), changeTable, function(label){
+                _this.checkNodeCount(label, _this.newDestinationSelect, _this.newDestinationAreaSelect);
+            }, (scheme != 'new') ? 1 : 3)
+
+        //this.materialChangeSelect.addEventListener('change', this.toggleNewMaterial);
 
         // forbid html escape codes in name
         this.nameInput.addEventListener('keyup', function(){
@@ -129,128 +219,215 @@ var SolutionPartView = BaseView.extend(
         this.el.querySelector('#affected-flows-tab button.add').addEventListener('click', this.addAffectedFlow);
     },
 
-    toggleNewMaterial: function(){
-        var materialChanges = this.materialChangeSelect.value == 'true';
-        this.newMaterialSelect.style.display = (materialChanges) ? 'inline-block' : 'none';
+    addCount: function(title, table, onClick, position){
+        var row = table.insertRow((position != null) ? position : -1),
+            cell1 = row.insertCell(0),
+            cell2 = row.insertCell(1),
+            _this = this;
+
+        var label = document.createElement('div');
+        label.innerHTML = title;
+        cell1.appendChild(label);
+
+        var countLabel = document.createElement('label'),
+            countButton = document.createElement('button');
+
+        countLabel.classList.add('count-label');
+        countLabel.innerHTML = '?';
+        countButton.classList.add('btn', 'btn-secondary', 'square');
+        countButton.innerHTML = gettext('Check');
+
+        countButton.addEventListener('click', function(){
+            onClick(countLabel);
+        })
+
+        cell2.appendChild(countLabel);
+        cell2.appendChild(countButton);
     },
 
-    toggleNewFlow: function(){
-        var implementsNewFlow = this.implNewFlowSelect.value == "true",
-            modFlowElements = this.el.querySelectorAll('.modified-flow'),
-            newFlowElements = this.el.querySelectorAll('.new-flow');
-        modFlowElements.forEach(function(el){
-            el.style.display = (implementsNewFlow) ? 'none' :'inline-block';
-        })
-        newFlowElements.forEach(function(el){
-            el.style.display = (implementsNewFlow) ? 'inline-block' :'none';
-        })
-        this.toggleReferencePart();
+    checkNodeCount: function(elFlowCount, input, areainput){
+        if (!elFlowCount || !input) return;
+
+        var data = {};
+
+        elFlowCount.innerHTML = '?';
+        var url = config.api['actors'].format(this.caseStudy.id, this.keyflowId) + 'count/';
+
+        if (areainput && areainput.value != -1){
+            var area = this.areas.get(areainput.value),
+                geom = area.get('geom');
+            data['area'] = JSON.stringify(geom);
+        }
+
+        Backbone.ajax({
+            url: url + '?GET=true&activity=' + input.value,
+            method: 'POST',
+            data: data,
+            success: function(res){
+                elFlowCount.innerHTML = res.count;
+            },
+            error: this.onError
+        });
+
+    },
+
+    checkFlowCount: function(elFlowCount){
+        var origin_activity = (this.referenceOriginSelect) ? this.referenceOriginSelect.value: null,
+            destination_activity = (this.referenceDestinationSelect) ? this.referenceDestinationSelect.value: null,
+            material = (this.referenceMaterialSelect) ? this.referenceMaterialSelect.dataset.selected: null,
+            includeChildren = this.referenceIncludeChildrenSelect.checked;
+
+        if (material == 'null') material = null;
+
+        if (!elFlowCount) return;
+
+        var queryData = {
+            'origin__activity': origin_activity,
+            'destination__activity': destination_activity
+        }
+
+        if (origin_activity == null || destination_activity == null){
+            elFlowCount.innerHTML = gettext('Origin and Destination have to be set.')
+            return;
+        }
+        if (material != null) queryData['material'] = material;
+
+        if (includeChildren) queryData['include_child_materials'] = true;
+
+        elFlowCount.innerHTML = '?';
+        var process = (this.referenceProcessSelect) ? this.referenceProcessSelect.value: null;
+        process = (process === '-1') ? null: process;
+
+        var data = {};
+        var area = (this.referenceOriginAreaSelect) ? this.referenceOriginAreaSelect.value: null;
+        origin_area = (area === '-1') ? null: area;
+
+        if (origin_area){
+            var area = this.areas.get(origin_area),
+                geom = area.get('geom');
+            data['origin_area'] = JSON.stringify(geom);
+        }
+
+        area = (this.referenceDestinationAreaSelect) ? this.referenceDestinationAreaSelect.value: null;
+        destination_area = (area === '-1') ? null: area;
+
+        if (destination_area){
+            var area = this.areas.get(destination_area),
+                geom = area.get('geom');
+            data['destination_area'] = JSON.stringify(geom);
+        }
+
+        var url = config.api['flows'].format(this.caseStudy.id, this.keyflowId) + 'count/';
+
+        if (process != null) queryData['process'] = process;
+
+        Backbone.ajax({
+            url: url + '?' + $.param(queryData),
+            method: 'POST',
+            data: data,
+            success: function(res){
+                elFlowCount.innerHTML = res.count;
+            },
+            error: this.onError
+        });
     },
 
     toggleHasQuestion: function(){
-        var hasQuestion = this.hasQuestionSelect.value == "true"
-            questElements = this.el.querySelectorAll('.with-question'),
-            noQuestElements = this.el.querySelectorAll('.no-question');
+        var questElements = this.el.querySelectorAll('.with-question'),
+            noQuestElements = this.el.querySelectorAll('.no-question'),
+            _this = this;
 
-        if (!hasQuestion)
+        if (!this.hasQuestion)
             this.aInput.value = 0;
 
         noQuestElements.forEach(function(el){
-            el.style.display = (hasQuestion) ? 'none' :'inline-block';
+            el.style.display = (_this.hasQuestion) ? 'none' :'inline-block';
         })
         questElements.forEach(function(el){
-            el.style.display = (hasQuestion) ? 'inline-block' :'none';
+            el.style.display = (_this.hasQuestion) ? 'inline-block' :'none';
         })
     },
 
     toggleAbsolute: function(){
         var absElements = this.el.querySelectorAll('.is-absolute'),
-            relElements = this.el.querySelectorAll('.is-relative');
-
-        var isAbsolute = false;
-        if (this.hasQuestionSelect.value == "false"){
-            isAbsolute = this.isAbsoluteSelect.value == "true";
-        } else {
-            var question = this.questions.get(this.questionSelect.value);
-            if (question)
-                isAbsolute = question.get('is_absolute') === true;
-        }
+            relElements = this.el.querySelectorAll('.is-relative'),
+            _this = this;
 
         relElements.forEach(function(el){
-            el.style.display = (isAbsolute) ? 'none' :'inline-block';
+            el.style.display = (_this.isAbsolute) ? 'none' :'inline-block';
         })
         absElements.forEach(function(el){
-            el.style.display = (isAbsolute) ? 'inline-block' :'none';
+            el.style.display = (_this.isAbsolute) ? 'inline-block' :'none';
         })
-    },
 
-    toggleReferencePart: function(){
-        var referencePart = this.implNewFlowSelect.value == 'true' && this.referencesPartSelect.value == 'true',
-            refElements = this.el.querySelectorAll('.reference-part'),
-            flowElements = this.el.querySelectorAll('.reference-flow');
-        flowElements.forEach(function(el){
-            el.style.display = (referencePart) ? 'none' :'inline-block';
-        })
-        refElements.forEach(function(el){
-            el.style.display = (referencePart) ? 'inline-block' :'none';
-        })
+        _this.populateQuestionSelect();
     },
 
     setInputs: function(){
-        var _this = this;
-        this.nameInput.value = this.model.get('name') || '';
-        this.implNewFlowSelect.value = this.model.get('implements_new_flow') || false;
-        this.referencesPartSelect.value = this.model.get('references_part') || false;
-        this.solutionPartSelect.value = this.model.get('implementation_flow_solution_part') || null;
-        this.originSelect.value = this.model.get('implementation_flow_origin_activity') || null;
-        this.destinationSelect.value = this.model.get('implementation_flow_destination_activity') || null;
-        var spatial = this.model.get('implementation_flow_spatial_application') || 'both';
-        spatial = spatial.toLowerCase();
-        this.spatialOriginCheck.checked = (spatial == 'origin' || spatial == 'both');
-        this.spatialDestinationCheck.checked = (spatial == 'destination' || spatial == 'both');
 
-        this.newTargetSelect.value = this.model.get('new_target_activity') || null;
-        this.mapRequestArea.value = this.model.get('map_request') || '';
-        var keepOrigin = this.model.get('keep_origin') || false;
-        this.keepOriginInput.value = keepOrigin;
-        var label = (keepOrigin) ? gettext('destination'): gettext('origin');
-        _this.el.querySelector('div[name="origdestlabel"]').innerHTML = label;
-
-        //this.spatialSelect.value = spatial.toLowerCase()
-        this.aInput.value = this.model.get('a') || 0;
-        this.bInput.value = this.model.get('b') || 0;
-
-        var question = this.model.get('question');
-        this.questionSelect.value = question || -1;
-        this.hasQuestionSelect.value = (question != null);
-        this.isAbsoluteSelect.value = this.model.get('is_absolute');
-
-        // hierarchy-select plugin offers no functions to set (actually no functions at all) -> emulate clicking on row
-        var material = this.model.get('implementation_flow_material'),
-            li = this.materialSelect.querySelector('li[data-value="' + material + '"]');
-        if(li){
-            var matItem = li.querySelector('a');
-            matItem.click();
-        }
-        var material = this.model.get('new_material');
-        if (material) {
-            this.materialChangeSelect.value = true;
-            var li = this.newMaterialSelect.querySelector('li[data-value="' + material + '"]');
+         // hierarchy-select plugin offers no functions to set (actually no functions at all) -> emulate clicking on row
+        function setMaterial(matSelect, material){
+            var li = matSelect.querySelector('li[data-value="' + material + '"]');
             if(li){
                 var matItem = li.querySelector('a');
                 matItem.click();
             }
-        } else {
-            this.materialChangeSelect.value = false;
         }
-        $(this.originSelect).selectpicker('refresh');
-        $(this.destinationSelect).selectpicker('refresh');
-        $(this.newTargetSelect).selectpicker('refresh');
-        this.toggleNewFlow();
+
+        var _this = this;
+        this.nameInput.value = this.model.get('name') || '';
+        //this.scheme = this.model.get('scheme');
+
+        var refFlow = this.model.get('flow_reference'),
+            changeFlow = this.model.get('flow_changes');
+
+        if (refFlow){
+            if (this.referenceOriginSelect) this.referenceOriginSelect.value = refFlow.origin_activity;
+            if (this.referenceDestinationSelect) this.referenceDestinationSelect.value = refFlow.destination_activity;
+            if (this.referenceMaterialSelect) this.referenceMaterialSelect.select(refFlow.material);
+            if (this.referenceProcessSelect) this.referenceProcessSelect.value = refFlow.process || -1;
+            if (this.referenceOriginAreaSelect) this.referenceOriginAreaSelect.value = refFlow.origin_area || -1;
+            if (this.referenceDestinationAreaSelect) this.referenceDestinationAreaSelect.value = refFlow.destination_area || -1;
+            if (this.referenceIncludeChildrenSelect) this.referenceIncludeChildrenSelect.checked = refFlow.include_child_materials || false;
+        }
+
+        if (changeFlow){
+            if (this.newOriginSelect) this.newOriginSelect.value = changeFlow.origin_activity;
+            if (this.newDestinationSelect) this.newDestinationSelect.value = changeFlow.destination_activity;
+            if (this.newMaterialSelect) this.newMaterialSelect.select(changeFlow.material);
+            if (this.newProcessSelect) this.newProcessSelect.value = changeFlow.process || -1;
+            if (this.newOriginAreaSelect) this.newOriginAreaSelect.value = changeFlow.origin_area || -1;
+            if (this.newDestinationAreaSelect) this.newDestinationAreaSelect.value = changeFlow.destination_area || -1;
+            if (this.newHazardousSelect) this.newHazardousSelect.value = (changeFlow.hazardous != null) ? changeFlow.waste: -1;
+            if (this.newWasteSelect) this.newWasteSelect.value = (changeFlow.waste != null) ? changeFlow.waste: -1;
+        }
+
+        //this.spatialSelect.value = spatial.toLowerCase()
+        this.aInput.value = this.model.get('a') || 1;
+        this.bInput.value = this.model.get('b') || 0;
+
+        var question = this.model.get('question');
+        this.questionSelect.value = question || -1;
+        this.hasQuestion = (question != null);
+        question = this.questions.get(question);
+        this.isAbsolute = (this.hasQuestion) ? question.get('is_absolute'): this.model.get('is_absolute');
+        if (this.scheme.toLowerCase() == 'new') this.isAbsolute = true;
+
+        var questValue = (this.hasQuestion) ? 'true': 'false';
+        this.hasQuestionRadios.forEach(function(radio){
+            radio.checked = radio.value === questValue;
+        })
+        var absValue = (this.isAbsolute) ? 'true': 'false';
+        this.isAbsoluteRadios.forEach(function(radio){
+            radio.checked = radio.value === absValue;
+        })
+
+        $(this.referenceOriginSelect).selectpicker('refresh');
+        $(this.referenceDestinationSelect).selectpicker('refresh');
+        $(this.newOriginSelect).selectpicker('refresh');
+        $(this.newDestinationSelect).selectpicker('refresh');
         this.toggleHasQuestion();
         this.toggleAbsolute();
-        this.toggleNewMaterial();
-        this.toggleReferencePart();
 
         var affected = this.model.get('affected_flows') || [];
         affected.forEach(function(flow){
@@ -260,32 +437,52 @@ var SolutionPartView = BaseView.extend(
 
     applyInputs: function(){
         var _this = this;
+
+        var refFlow = {}, changeFlow = {};
+
+        this.model.set('scheme', this.scheme);
         this.model.set('name', this.nameInput.value);
-        this.model.set('implements_new_flow', this.implNewFlowSelect.value);
-        this.model.set('references_part', this.referencesPartSelect.value);
-        this.model.set('implementation_flow_solution_part', (this.solutionPartSelect.value != "-1") ? this.solutionPartSelect.value: null);
-        this.model.set('implementation_flow_origin_activity', (this.originSelect.value != "-1") ? this.originSelect.value: null);
-        this.model.set('implementation_flow_destination_activity', (this.destinationSelect.value != "-1") ? this.destinationSelect.value: null);
-        var selectedMaterial = this.materialSelect.dataset.selected;
-        this.model.set('implementation_flow_material', selectedMaterial);
-        var newMaterial = (this.materialChangeSelect.value == 'true') ? this.newMaterialSelect.dataset.selected: null;
-        this.model.set('new_material', newMaterial);
-        var spatial = (this.spatialOriginCheck.checked && this.spatialDestinationCheck.checked) ? 'both':
-                      (this.spatialOriginCheck.checked) ? 'origin': 'destination';
-        this.model.set('implementation_flow_spatial_application', spatial);
+
+        refFlow.origin_activity = (this.referenceOriginSelect) ? this.referenceOriginSelect.value: null;
+        refFlow.destination_activity = (this.referenceDestinationSelect) ? this.referenceDestinationSelect.value : null;
+        var material = (this.referenceMaterialSelect) ? parseInt(this.referenceMaterialSelect.dataset.selected): null;
+        if (material == 'null') material = null;
+        refFlow.material = material;
+        if (this.referenceIncludeChildrenSelect)
+            refFlow.include_child_materials = this.referenceIncludeChildrenSelect.checked;
+
+        var process = (this.referenceProcessSelect) ? this.referenceProcessSelect.value: null;
+        refFlow.process = (process === '-1') ? null: process;
+        var area = (this.referenceOriginAreaSelect) ? this.referenceOriginAreaSelect.value: null;
+        refFlow.origin_area = (area === '-1') ? null: area;
+        area = (this.referenceDestinationAreaSelect) ? this.referenceDestinationAreaSelect.value: null;
+        refFlow.destination_area = (area === '-1') ? null: area;
+
+        this.model.set('flow_reference', refFlow);
+
+        changeFlow.origin_activity = (this.newOriginSelect) ? this.newOriginSelect.value: null;
+        changeFlow.destination_activity = (this.newDestinationSelect) ? this.newDestinationSelect.value : null;
+        material = (this.newMaterialSelect) ? parseInt(this.newMaterialSelect.dataset.selected): null;
+        if (material == 'null') material = null;
+        changeFlow.material = material;
+        process = (this.newProcessSelect) ? this.newProcessSelect.value: null;
+        changeFlow.process = (process === '-1') ? null: process;
+        area = (this.newOriginAreaSelect) ? this.newOriginAreaSelect.value: null;
+        changeFlow.origin_area = (area === '-1') ? null: area;
+        area = (this.newDestinationAreaSelect) ? this.newDestinationAreaSelect.value: null;
+        changeFlow.destination_area = (area === '-1') ? null: area;
+        process = (this.newProcessSelect) ? this.newProcessSelect.value: null;
+        changeFlow.waste = (this.newWasteSelect) ? this.newWasteSelect.value: -1;
+        changeFlow.hazardous = (this.newHazardousSelect) ? this.newHazardousSelect.value: -1;
+
+        this.model.set('flow_changes', changeFlow);
+
         this.model.set('documentation', '');
-        this.model.set('map_request', '');
         this.model.set('a', this.aInput.value);
         this.model.set('b', this.bInput.value);
         var question = this.questionSelect.value;
-        var hasQuestion = this.hasQuestionSelect.value == "true";
-        this.model.set('question', (hasQuestion && question != "-1") ? question: null);
-
-        this.model.get('is_absolute', this.isAbsoluteSelect.value);
-
-        this.model.set('new_target_activity', (this.newTargetSelect.value != "-1") ? this.newTargetSelect.value: null);
-        this.model.set('keep_origin', this.keepOriginInput.value);
-        this.model.set('map_request', this.mapRequestArea.value);
+        this.model.set('question', (this.hasQuestion && question != "-1") ? question: null);
+        this.model.set('is_absolute', this.isAbsolute);
 
         var affectedFlowRows = this.affectedDiv.querySelectorAll('.row'),
             affectedFlows = [];
@@ -307,27 +504,18 @@ var SolutionPartView = BaseView.extend(
         this.model.set('affected_flows', affectedFlows);
     },
 
-    populateSolutionPartSelect: function(){
-        var _this = this,
-            newFlowParts = this.solutionParts.filterBy({ implements_new_flow: true });
-        newFlowParts.forEach(function(part){
-            var option = document.createElement('option');
-            option.value = part.id;
-            option.innerHTML = part.get('name');
-            _this.solutionPartSelect.appendChild(option);
-        })
-    },
-
     populateQuestionSelect: function(){
         var _this = this;
         utils.clearSelect(this.questionSelect);
+
+        var questions = this.questions.where({is_absolute: this.isAbsolute});
 
         var option = document.createElement('option');
         option.value = -1;
         option.text = gettext('Select');
         option.disabled = true;
         this.questionSelect.appendChild(option);
-        this.questions.forEach(function(question){
+        questions.forEach(function(question){
             var option = document.createElement('option');
             option.value = question.id;
             option.text = question.get('question');
@@ -336,6 +524,7 @@ var SolutionPartView = BaseView.extend(
     },
 
     populateActivitySelect: function(select){
+        if (select == null) return;
         var _this = this;
         utils.clearSelect(select);
 
@@ -359,31 +548,77 @@ var SolutionPartView = BaseView.extend(
         $(select).selectpicker('refresh');
     },
 
-    renderMatFilter: function(el, width){
+    populateAreaSelect: function(select){
+        if (select == null) return;
         var _this = this;
+        utils.clearSelect(select);
+
+        var option = document.createElement('option');
+        option.value = -1;
+        option.text = gettext('no spatial restriction');
+        select.appendChild(option);
+        this.areas.forEach(function(area){
+            var option = document.createElement('option');
+            option.value = area.id;
+            option.text = area.get('question');
+            select.appendChild(option);
+        })
+    },
+
+    populateProcessSelect: function(select, options){
+        if (select == null) return;
+        var _this = this,
+            options = options || {};
+        utils.clearSelect(select);
+
+        var option = document.createElement('option');
+        option.value = -1;
+        option.text = options.defaultOption || gettext('Select');
+        select.appendChild(option);
+        this.processes.forEach(function(process){
+            var option = document.createElement('option');
+            option.value = process.id;
+            option.text = process.get('name');
+            select.appendChild(option);
+        })
+    },
+
+    renderMatFilter: function(el, options){
+        if (el == null) return;
+        var _this = this,
+            options = options || {};
         this.selectedMaterial = null;
         // select material
         var matSelect = document.createElement('div');
         matSelect.classList.add('materialSelect');
         var select = this.el.querySelector('.hierarchy-select');
         var flowsInChildren = {};
-        // count materials in parent, descending level (leafs first)
-        this.materials.models.reverse().forEach(function(material){
-            var parent = material.get('parent'),
-                count = material.get('flow_count') + (flowsInChildren[material.id] || 0);
-            flowsInChildren[parent] = (!flowsInChildren[parent]) ? count: flowsInChildren[parent] + count;
-        })
+        if (options.countChildren) {
+            // count materials in parent, descending level (leafs first)
+            this.materials.models.reverse().forEach(function(material){
+                var parent = material.get('parent'),
+                    count = material.get('flow_count') + (flowsInChildren[material.id] || 0);
+                flowsInChildren[parent] = (!flowsInChildren[parent]) ? count: flowsInChildren[parent] + count;
+            })
+        }
 
         var hierarchicalSelect = this.hierarchicalSelect(this.materials, matSelect, {
             onSelect: function(model){
-                 el.dataset.selected = model.id;
+                 el.dataset.selected = (model) ? model.id: null;
+                 if (options.onSelect) options.onSelect();
             },
-            width: width,
-            defaultOption: gettext('Select'),
+            width: options.width,
+            defaultOption: options.defaultOption || gettext('Select'),
             label: function(model, option){
                 var compCount = model.get('flow_count'),
-                    childCount = flowsInChildren[model.id] || 0,
-                    label = model.get('name') + '(' + compCount + ' / ' + childCount + ')';
+                    label = model.get('name');
+
+                if (options.showCount && options.countChildren) {
+                    var childCount = flowsInChildren[model.id] || 0;
+                    label += ' (' + gettext('used ') + ' ' + compCount + 'x / ' + gettext('children used ') + ' ' + childCount + 'x)';
+                } else if (options.showCount){
+                    label += ' (' + gettext('total of') + ' ' + compCount + ')';
+                }
                 return label;
             }
         });
@@ -394,11 +629,11 @@ var SolutionPartView = BaseView.extend(
         matFlowless.forEach(function(material){
             var li = hierarchicalSelect.querySelector('li[data-value="' + material.id + '"]');
             if (!li) return;
-            var a = li.querySelector('a'),
-                cls = (flowsInChildren[material.id] > 0) ? 'half': 'empty';
-            a.classList.add(cls);
+            var a = li.querySelector('a');
+            a.classList.add('empty');
         })
         el.appendChild(hierarchicalSelect);
+        el.select = hierarchicalSelect.select;
     },
 
     addAffectedFlow: function(flow){
@@ -406,6 +641,7 @@ var SolutionPartView = BaseView.extend(
             html = document.getElementById('affected-flow-row-template').innerHTML,
             template = _.template(html),
             _this = this;
+        if (flow.tag) row.dataset.tag = flow.tag;
         row.innerHTML = template({});
         row.classList.add('row');
         var matSelect = row.querySelector('div[name="material"]'),
@@ -423,12 +659,7 @@ var SolutionPartView = BaseView.extend(
         if (flow){
             originSelect.value = flow['origin_activity'];
             destinationSelect.value = flow['destination_activity'];
-            destinationSelect.value = flow['destination_activity'];
-            li = matSelect.querySelector('li[data-value="' + flow['material'] + '"]');
-            if(li){
-                var matItem = li.querySelector('a');
-                matItem.click();
-            }
+            matSelect.select(flow['material']);
         }
 
         $(originSelect).selectpicker('refresh');
@@ -436,7 +667,114 @@ var SolutionPartView = BaseView.extend(
         removeBtn.addEventListener('click', function(){
             _this.affectedDiv.removeChild(row);
         })
-    }
+    },
+
+    fetchFlows: function(options){
+        var displayLevel = 'activity',
+            _this = this,
+            material = this.affectedMaterialSelect.dataset.selected;
+
+        var filterParams = {
+            materials: { ids: [material]},
+            aggregation_level: {
+                origin: displayLevel,
+                destination: displayLevel
+            }
+        };
+
+        var flows = new GDSECollection([], {
+            apiTag: 'flows',
+            apiIds: [ this.caseStudy.id, this.keyflowId]
+        });
+
+        //this.loader.activate();
+        var data = {};
+        var loader = new utils.Loader(this.sankeyWrapper);
+        loader.activate();
+        flows.postfetch({
+            body: filterParams,
+            success: function(response){
+                var idx = 0;
+                flows.forEach(function(flow){
+                    var origin = flow.get('origin'),
+                        destination = flow.get('destination');
+                    // api aggregates flows and doesn't return an id
+                    // generate an internal one to assign interactions
+                    flow.set('id', idx);
+                    idx++;
+                    origin.color = utils.colorByName(origin.name);
+                })
+                if (options.success){
+                    loader.deactivate();
+                    options.success(flows);
+                }
+            },
+            error: function(error){
+                loader.deactivate();
+                _this.onError(error);
+            }
+        })
+    },
+
+    drawSankey: function(){
+        if (this.flowSankeyView != null) this.flowSankeyView.close();
+        var displayLevel = 'activity',
+            _this = this;
+
+        this.fetchFlows({
+            success: function(flows){
+                _this.flowSankeyView = new FlowSankeyView({
+                    el: _this.sankeyWrapper,
+                    width:  _this.sankeyWrapper.clientWidth - 10,
+                    flows: flows,
+                    height: 400,
+                    originLevel: displayLevel,
+                    destinationLevel: displayLevel,
+                    renderStocks: false
+                })
+            }
+        })
+    },
+
+    linkSelected: function(e){
+        // only actors atm
+        var data = e.detail,
+            _this = this;
+
+        if (!Array.isArray(data)) data = [data];
+
+        data.forEach(function(d){
+            var origin = d.get('origin'),
+                destination = d.get('destination'),
+                materials = d.get('materials');
+            materials.forEach(function(m){
+                var material = m.material;
+                _this.addAffectedFlow({
+                    origin_activity: origin.id,
+                    destination_activity: destination.id,
+                    material: m.material,
+                    tag: d.id
+                })
+            })
+        })
+    },
+
+    linkDeselected: function(e){
+        // only actors atm
+        var data = e.detail,
+            _this = this;
+
+        if (!Array.isArray(data)) data = [data];
+
+        data.forEach(function(d){
+            var rows = _this.affectedDiv.querySelectorAll('div[data-tag="' + d.id + '"]');
+            rows.forEach(function(row){
+                _this.affectedDiv.removeChild(row);
+            })
+        })
+    },
+
+
 
 });
 return SolutionPartView;

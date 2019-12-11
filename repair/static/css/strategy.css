@@ -1,0 +1,81 @@
+.scheme-preview{
+    width: 30%;
+    cursor: pointer;
+    float: left;
+    border: 1px solid grey;
+    white-space: initial;
+    padding: 10px;
+    border-radius: 5px;
+    box-shadow: 0px 1px 6px 0px rgba(0, 0, 0, 0.2);
+    margin: 5px;
+}
+
+.scheme-preview:hover, .scheme-preview.selected{
+    background: #aad400;
+    color:white;
+}
+
+.scheme-preview > img{
+    width: 100%;
+    background: white;
+    border-radius: 5px;
+}
+
+.scheme-preview > label{
+    text-align: center;
+    width: 100%;
+    cursor: pointer;
+}
+
+#selected-scheme-image {
+    max-width: 100%;
+    max-height: 500px;
+}
+
+.part-table{
+    table-layout: fixed;
+    max-width: 100%;
+    width: 100%;
+}
+
+.part-table .btn-group, .part-table select{
+    max-width: 100%;
+}
+
+#affected-flows .btn-group, .affected-flows select{
+    max-width: 150px;
+}
+
+.part-table th{
+    padding: 5px;
+    font-weight: normal;
+}
+
+.part-table tr{
+    border-bottom: 1px solid lightgrey;
+}
+
+.part-table td:first-child{
+    width:10%;
+}
+
+.part-table tr:last-child{
+   border-bottom: none;
+}
+
+#scheme-preview img, #affected-flows-tab img{
+    max-width: 100%;
+    cursor: pointer;
+    border: 1px solid darkgrey;
+}
+
+/*white background in fullscreen*/
+.viewer-backdrop img {
+    background-color: white;
+}
+
+.count-label {
+    float: left;
+    padding: 3px;
+    margin-right: 20px;
+}

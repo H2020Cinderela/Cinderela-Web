@@ -1,0 +1,859 @@
+{% load i18n %}
+{% block content %}
+
+<!-- solution part -->
+<script type="text/template" id="solution-part-template">
+<div class="row">
+  <label>{% trans "Name" %} </label>
+  <input class="form-control" name="part-name">
+</div>
+<ul class="nav nav-tabs" style="margin-top: 20px;">
+  <li class="active"><a data-toggle="tab" href="#definition-tab"><%= title %></a></li>
+  <li><a data-toggle="tab" href="#affected-flows-tab">{% trans "Possibly Affected Flows" %}</a></li>
+</ul>
+<div class="tab-content bordered">
+  <div class="tab-pane fade in active" id="definition-tab">
+    <div class="row">
+      <div class="col-md-9" id="definition-content">
+      </div>
+      <div class="col-md-3" id="scheme-preview" style="border: 1px solid lightgrey; padding-bottom: 20px;">
+        <h3><%= title %></h3>
+        <div class="row">
+          <img src="{{STATIC_URL}}img/<%= schemepreview %>">
+          <br>
+          <label>{% trans "Scheme" %} </label>
+        </div>
+        <div class="row">
+          <img src="{{STATIC_URL}}img/<%= schemeexample %>">
+          <br>
+          <label>{% trans "Example" %} </label>
+        </div>
+        <div class="row">
+          <img style="max-height: 150px;" src="{{STATIC_URL}}img/schemes/legend.png">
+          <br>
+          <label>{% trans "Legend" %} </label>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="tab-pane fade in" id="affected-flows-tab">
+    <div class="row">
+      <div class="col-md-5">
+        <div class="row">
+          {% trans "Material (Sankey)" %}
+          <div name="affected-material"></div>
+        </div>
+        <div class="row" style="position: relative;">
+          <div class="sankey-wrapper" class="noselect" style="width: 100%; min-height: 200px;">
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <p style="max-width: 800px;">
+          {% blocktrans %}
+          Please list all flows that could possibly be changed due to the changes of the initial impact flow caused by this solution part.
+          Please include flows "downstream" as much as "upstream".
+          {% endblocktrans %}
+        </p>
+        <p style="max-width: 800px;">
+          {% blocktrans %}
+          Flows not included in this list will be ignored when applying this solution part to the flow model algorithm and
+          therefore not change their volume. All flow definitions in this list have to be on activity level.
+          {% endblocktrans %}
+        </p>
+        <div id="affected-flows"></div>
+        <button class="btn btn-primary add square">
+          <span class="glyphicon glyphicon-plus"></span> {% trans "Add affected flow" %}
+        </button>
+      </div>
+      <div class="col-md-1" id="scheme-preview" style="border: 1px solid lightgrey; padding-bottom: 20px;">
+        <div class="row">
+          <img src="{{STATIC_URL}}img/schemes/affected.png">
+          <br>
+          <label>{% trans "Scheme" %} </label>
+        </div>
+        <div class="row">
+          <img src="{{STATIC_URL}}img/schemes/affected-example.png">
+          <br>
+          <label>{% trans "Example" %} </label>
+        </div>
+        <div class="row">
+          <img style="max-height: 150px;" src="{{STATIC_URL}}img/schemes/legend.png">
+          <br>
+          <label>{% trans "Legend" %} </label>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</script>
+
+<!-- affected flow row-->
+<script type="text/template" id="affected-flow-row-template">
+  {% trans "Material" %}
+  <div name="material" style="width: 200px; display: inline-block;"></div>
+  {% trans "from" %}
+  <select name="origin" style="width: 200px; display: inline-block;"></select>
+  {% trans "to" %}
+  <select name="destination" style="width: 200px; display: inline-block;"></select>
+  <button class="btn btn-warning square remove" title="remove affected flow">
+    <span class="glyphicon glyphicon-minus"></span>
+  </button>
+</script>
+
+<!-- modify flow -->
+<script type="text/template" id="modify-flow-template">
+<h4> {% trans "Filter the flow that will be modified" %} </h4>
+<table class='part-table'>
+  <tr>
+    <td>
+      <label> {% trans "Origin" %} </label>
+    </td>
+    <td>
+      <select name="reference-origin"></select>
+    </td>
+    <td>
+      <label> {% trans "Possible Impl. Area" %} </label>
+      <select name="reference-origin-area"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "Destination" %} </label>
+    </td>
+    <td>
+      <select name="reference-destination"></select>
+    </td>
+    <td>
+      <label> {% trans "Possible Impl. Area" %} </label>
+      <select name="reference-destination-area"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label style="float: left"> {% trans "Material" %} </label>
+    </td>
+    <td>
+      <div name="reference-material"></div>
+    </td>
+    <td>
+      <input type="checkbox" name="include-child-materials"> {% trans "include child materials" %}
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "Process" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="reference-process"></select>
+    </td>
+  </tr>
+</table>
+<br>
+<h4> {% trans "Modification of the flow" %} </h4>
+<table class='part-table'>
+  <tr>
+    <td>
+      <label style="float: left"> {% trans "Material" %} </label>
+    </td>
+    <td>
+      <div name="new-material"></div>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "Process" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="new-process"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "New Material status" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="new-waste">
+        <option value="-1">{% trans "No change" %}</option>
+        <option value="0">{% trans "Product" %}</option>
+        <option value="1">{% trans "Waste" %}</option>
+      </select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "Hazard" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="new-hazardous">
+        <option value="-1">{% trans "No change" %}</option>
+        <option value="0">{% trans "not hazardous" %}</option>
+        <option value="1">{% trans "hazardous" %}</option>
+      </select>
+    </td>
+  </tr>
+</table>
+<br>
+<h4> {% trans "Change of mass" %} </h4>
+<div class="row">
+  <input type="radio" name="is-absolute" value="true" checked> {% trans "absolute change" %} <br>
+  <input type="radio" name="is-absolute" value="false"> {% trans "relative change" %} <br>
+  <br>
+  {% trans "Do you want to refer to a user question for calculating the change of the mass?" %} <br>
+  <input type="radio" name="has-question" value="true" checked> {% trans "yes" %}
+  <select class="with-question" name='question' style="margin-left: 20px; min-width: 200px;"></select>
+  <div class="with-question is-absolute"> {% trans "(absolute question)" %} </div>
+  <div class="with-question is-relative"> {% trans "(relative question)" %} </div>
+  <br>
+  <input type="radio" name="has-question" value="false"> {% trans "no" %} <br>
+  <br>
+  <div class="row" style="margin-top: 15px; font-size: 1.2em;">
+    {% trans "Flow amount in solution = Flow amount in status quo" %}
+    <div class="is-absolute"> &nbsp;+&nbsp;{% trans "Delta" %}</div>
+    <div class="is-relative"> &nbsp;*&nbsp;{% trans "Factor" %}</div>
+  </div>
+  <div class="row" style="font-size: 1.2em;">
+    <div class="is-absolute"> {% trans "Delta" %} </div>
+    <div class="is-relative"> {% trans "Factor" %} </div>
+    &nbsp;=&nbsp;
+    <div class='with-question'>
+      <input name='a' type="number" step="0.0001" style="display: inline-block; width: 150px;">
+      &nbsp;*&nbsp;{% trans "answer to selected question" %}&nbsp;+&nbsp;
+    </div>
+    <input name='b' type="number" step="0.0001" style="display: inline-block; width: 150px;">
+  </div>
+</div>
+</script>
+
+<!-- shift origin -->
+<script type="text/template" id="shift-origin-template">
+<h4> {% trans "Filter the flow that will be shifted" %} </h4>
+<table class='part-table'>
+  <tr>
+    <td>
+      <label> {% trans "Origin" %} </label>
+    </td>
+    <td>
+      <select name="reference-origin"></select>
+    </td>
+    <td>
+      <label> {% trans "Possible Impl. Area" %} </label>
+      <select name="reference-origin-area"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "Destination" %} </label>
+    </td>
+    <td>
+      <select name="reference-destination"></select>
+    </td>
+    <td>
+      <label> {% trans "Possible Impl. Area" %} </label>
+      <select name="reference-destination-area"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label style="float: left"> {% trans "Material" %} </label>
+    </td>
+    <td>
+      <div name="reference-material"></div>
+    </td>
+    <td>
+      <input type="checkbox" name="include-child-materials"> {% trans "include child materials" %}
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "Process" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="reference-process"></select>
+    </td>
+  </tr>
+</table>
+<br>
+<h4> {% trans "To which activity shall the flow be shifted?" %} </h4>
+<table class='part-table'>
+  <tr>
+    <td>
+      <label> {% trans "New Origin" %} </label>
+    </td>
+    <td>
+      <select name="new-origin"></select>
+    </td>
+    <td>
+      <label> {% trans "Possible Impl. Area" %} </label>
+      <select name="new-origin-area"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label style="float: left"> {% trans "New Material" %} </label>
+    </td>
+    <td>
+      <div name="new-material"></div>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "New Process" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="new-process"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "New Material status" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="new-waste">
+        <option value="-1">{% trans "No change" %}</option>
+        <option value="0">{% trans "Product" %}</option>
+        <option value="1">{% trans "Waste" %}</option>
+      </select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "Hazard" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="new-hazardous">
+        <option value="-1">{% trans "No change" %}</option>
+        <option value="0">{% trans "not hazardous" %}</option>
+        <option value="1">{% trans "hazardous" %}</option>
+      </select>
+    </td>
+  </tr>
+</table>
+<br>
+<h4> {% trans "Mass of shifted flow in relation to existing flow" %} </h4>
+<div class="row">
+  <input type="radio" name="is-absolute" value="true" checked> {% trans "absolute change" %} <br>
+  <input type="radio" name="is-absolute" value="false"> {% trans "relative change" %} <br>
+  <br>
+  {% trans "Do you want to refer to a user question for calculating the mass?" %} <br>
+  <input type="radio" name="has-question" value="true" checked> {% trans "yes" %}
+  <select class="row with-question" name='question' style="margin-left: 20px; min-width: 200px;"></select>
+  <br>
+  <input type="radio" name="has-question" value="false"> {% trans "no" %} <br>
+  <br>
+  <div class="row" style="margin-top: 15px; font-size: 1.2em;">
+    {% trans "Flow amount of shifted flow = Flow amount of existing flow" %}
+    <div class="is-absolute"> &nbsp;+&nbsp;{% trans "Delta" %}</div>
+    <div class="is-relative"> &nbsp;*&nbsp;{% trans "Factor" %}</div>
+  </div>
+  <div class="row" style="font-size: 1.2em;">
+    <div class="is-absolute"> {% trans "Delta" %} </div>
+    <div class="is-relative"> {% trans "Factor" %} </div>
+    &nbsp;=&nbsp;
+    <div class='with-question'>
+      <input name='a' type="number" step="0.0001" style="display: inline-block; width: 150px;">
+      &nbsp;*&nbsp;{% trans "answer to selected question" %}&nbsp;+&nbsp;
+    </div>
+    <input name='b' type="number" step="0.0001" style="display: inline-block; width: 150px;">
+    <br>
+    <div style="color: red;">{% trans "The existing flow will be reduced automatically by the relevant amount." %} </div>
+  </div>
+</div>
+</script>
+
+<!-- shift destination -->
+<script type="text/template" id="shift-destination-template">
+<h4> {% trans "Filter the flow that will be shifted" %} </h4>
+<table class='part-table'>
+  <tr>
+    <td>
+      <label> {% trans "Origin" %} </label>
+    </td>
+    <td>
+      <select name="reference-origin"></select>
+    </td>
+    <td>
+      <label> {% trans "Possible Impl. Area" %} </label>
+      <select name="reference-origin-area"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "Destination" %} </label>
+    </td>
+    <td>
+      <select name="reference-destination"></select>
+    </td>
+    <td>
+      <label> {% trans "Possible Impl. Area" %} </label>
+      <select name="reference-destination-area"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label style="float: left"> {% trans "Material" %} </label>
+    </td>
+    <td>
+      <div name="reference-material"></div>
+    </td>
+    <td>
+      <input type="checkbox" name="include-child-materials"> {% trans "include child materials" %}
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "Process" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="reference-process"></select>
+    </td>
+  </tr>
+</table>
+<br>
+<h4> {% trans "To which activity shall the flow be shifted?" %} </h4>
+<table class='part-table'>
+  <tr>
+    <td>
+      <label> {% trans "New Destination" %} </label>
+    </td>
+    <td>
+      <select name="new-destination"></select>
+    </td>
+    <td>
+      <label> {% trans "Possible Impl. Area" %} </label>
+      <select name="new-destination-area"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label style="float: left"> {% trans "New Material" %} </label>
+    </td>
+    <td>
+      <div name="new-material"></div>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "New Process" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="new-process"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "New Material status" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="new-waste">
+        <option value="-1">{% trans "No change" %}</option>
+        <option value="0">{% trans "Product" %}</option>
+        <option value="1">{% trans "Waste" %}</option>
+      </select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "Hazard" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="new-hazardous">
+        <option value="-1">{% trans "No change" %}</option>
+        <option value="0">{% trans "not hazardous" %}</option>
+        <option value="1">{% trans "hazardous" %}</option>
+      </select>
+    </td>
+  </tr>
+</table>
+<br>
+<h4> {% trans "Mass of shifted flow in relation to existing flow" %} </h4>
+<div class="row">
+  <input type="radio" name="is-absolute" value="true" checked> {% trans "absolute change" %} <br>
+  <input type="radio" name="is-absolute" value="false"> {% trans "relative change" %} <br>
+  <br>
+  {% trans "Do you want to refer to a user question for calculating the mass?" %} <br>
+  <input type="radio" name="has-question" value="true" checked> {% trans "yes" %}
+  <select class="row with-question" name='question' style="margin-left: 20px; min-width: 200px;"></select>
+  <br>
+  <input type="radio" name="has-question" value="false"> {% trans "no" %} <br>
+  <br>
+  <div class="row" style="margin-top: 15px; font-size: 1.2em;">
+    {% trans "Flow amount of shifted flow = Flow amount of existing flow" %}
+    <div class="is-absolute"> &nbsp;+&nbsp;{% trans "Delta" %}</div>
+    <div class="is-relative"> &nbsp;*&nbsp;{% trans "Factor" %}</div>
+  </div>
+  <div class="row" style="font-size: 1.2em;">
+    <div class="is-absolute"> {% trans "Delta" %} </div>
+    <div class="is-relative"> {% trans "Factor" %} </div>
+    &nbsp;=&nbsp;
+    <div class='with-question'>
+      <input name='a' type="number" step="0.0001" style="display: inline-block; width: 150px;">
+      &nbsp;*&nbsp;{% trans "answer to selected question" %}&nbsp;+&nbsp;
+    </div>
+    <input name='b' type="number" step="0.0001" style="display: inline-block; width: 150px;">
+    <br>
+    <div style="color: red;">{% trans "The existing flow will be reduced automatically by the relevant amount." %} </div>
+  </div>
+</div>
+</script>
+
+<!-- new flow -->
+<script type="text/template" id="new-flow-template">
+<h4> {% trans "Attributes of the new flow" %} </h4>
+<table class='part-table'>
+  <tr>
+    <td>
+      <label> {% trans "Origin" %} </label>
+    </td>
+    <td>
+      <select name="new-origin"></select>
+    </td>
+    <td>
+      <label> {% trans "Possible Impl. Area" %} </label>
+      <select name="new-origin-area"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "Destination" %} </label>
+    </td>
+    <td>
+      <select name="new-destination"></select>
+    </td>
+    <td>
+      <label> {% trans "Possible Impl. Area" %} </label>
+      <select name="new-destination-area"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label style="float: left"> {% trans "Material" %} </label>
+    </td>
+    <td>
+      <div name="new-material"></div>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "Process" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="new-process"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "Material status" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="new-waste">
+        <option value="0">{% trans "Product" %}</option>
+        <option value="1">{% trans "Waste" %}</option>
+      </select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "Hazard" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="new-hazardous">
+        <option value="0">{% trans "not hazardous" %}</option>
+        <option value="1">{% trans "hazardous" %}</option>
+      </select>
+    </td>
+  </tr>
+</table>
+<br>
+<h4> {% trans "Mass" %} </h4>
+<div class="row">
+  {% trans "Do you want to refer to a user question for setting the mass?" %} <br>
+  <input type="radio" name="has-question" value="true" checked> {% trans "yes" %}
+  <select class="row with-question" name='question' style="margin-left: 20px; min-width: 200px;"></select>
+  <br>
+  <input type="radio" name="has-question" value="false"> {% trans "no" %} <br>
+  <br>
+  <div class="row" style="margin-top: 15px; font-size: 1.2em;">
+    {% trans "Flow amount of new flow = " %}{% trans "Delta" %}
+  </div>
+  <div class="row" style="font-size: 1.2em;">
+    {% trans "Delta" %}
+    &nbsp;=&nbsp;
+    <div class='with-question'>
+      <input name='a' type="number" step="0.0001" style="display: inline-block; width: 150px;">
+      &nbsp;*&nbsp;{% trans "answer to selected question" %}&nbsp;+&nbsp;
+    </div>
+    <input name='b' type="number" step="0.0001" style="display: inline-block; width: 150px;">
+  </div>
+</div>
+</script>
+
+<!-- prepend flow -->
+<script type="text/template" id="prepend-flow-template">
+<h4> {% trans "Filter the flow the new flow is prepended to" %} </h4>
+<table class='part-table'>
+  <tr>
+    <td>
+      <label> {% trans "Origin (= Destination of new flow)" %} </label>
+    </td>
+    <td>
+      <select name="reference-origin"></select>
+    </td>
+    <td>
+      <label> {% trans "Possible Impl. Area" %} </label>
+      <select name="reference-origin-area"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "Destination" %} </label>
+    </td>
+    <td>
+      <select name="reference-destination"></select>
+    </td>
+    <td>
+      <label> {% trans "Possible Impl. Area" %} </label>
+      <select name="reference-destination-area"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label style="float: left"> {% trans "Material" %} </label>
+    </td>
+    <td>
+      <div name="reference-material"></div>
+    </td>
+    <td>
+      <input type="checkbox" name="include-child-materials"> {% trans "include child materials" %}
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "Process" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="reference-process"></select>
+    </td>
+  </tr>
+</table>
+<br>
+<h4> {% trans "From which activity will the new flow originate from?" %} </h4>
+<table class='part-table'>
+  <tr>
+    <td>
+      <label> {% trans "Origin" %} </label>
+    </td>
+    <td>
+      <select name="new-origin"></select>
+    </td>
+    <td>
+      <label> {% trans "Possible Impl. Area" %} </label>
+      <select name="new-origin-area"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label style="float: left"> {% trans "New Material" %} </label>
+    </td>
+    <td>
+      <div name="new-material"></div>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "New Process" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="new-process"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "New Material status" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="new-waste">
+        <option value="-1">{% trans "No change" %}</option>
+        <option value="0">{% trans "Product" %}</option>
+        <option value="1">{% trans "Waste" %}</option>
+      </select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "Hazard" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="new-hazardous">
+        <option value="-1">{% trans "No change" %}</option>
+        <option value="0">{% trans "not hazardous" %}</option>
+        <option value="1">{% trans "hazardous" %}</option>
+      </select>
+    </td>
+  </tr>
+</table>
+<br>
+<h4> {% trans "Mass of prepended flow in relation to existing flow" %} </h4>
+<div class="row">
+  <input type="radio" name="is-absolute" value="true" disabled> {% trans "absolute change" %} <br>
+  <input type="radio" name="is-absolute" value="false" checked> {% trans "relative change" %} <br>
+  <br>
+  {% trans "Do you want to refer to a user question for calculating the mass?" %} <br>
+  <input type="radio" name="has-question" value="true" checked> {% trans "yes" %}
+  <select class="row with-question" name='question' style="margin-left: 20px; min-width: 200px;"></select>
+  <br>
+  <input type="radio" name="has-question" value="false"> {% trans "no" %} <br>
+  <br>
+  <div class="row" style="margin-top: 15px; font-size: 1.2em;">
+    {% trans "Flow amount of prepended flow = Flow amount of existing flow" %}
+    <div class="is-absolute"> &nbsp;+&nbsp;{% trans "Delta" %}</div>
+    <div class="is-relative"> &nbsp;*&nbsp;{% trans "Factor" %}</div>
+  </div>
+  <div class="row" style="font-size: 1.2em;">
+    <div class="is-absolute"> {% trans "Delta" %} </div>
+    <div class="is-relative"> {% trans "Factor" %} </div>
+    &nbsp;=&nbsp;
+    <div class='with-question'>
+      <input name='a' type="number" step="0.0001" style="display: inline-block; width: 150px;">
+      &nbsp;*&nbsp;{% trans "answer to selected question" %}&nbsp;+&nbsp;
+    </div>
+    <input name='b' type="number" step="0.0001" style="display: inline-block; width: 150px;">
+  </div>
+</div>
+</script>
+
+<!-- append flow -->
+<script type="text/template" id="append-flow-template">
+<h4> {% trans "Filter the flow the new flow is append to" %} </h4>
+<table class='part-table'>
+  <tr>
+    <td>
+      <label> {% trans "Origin" %} </label>
+    </td>
+    <td>
+      <select name="reference-origin"></select>
+    </td>
+    <td>
+      <label> {% trans "Possible Impl. Area" %} </label>
+      <select name="reference-origin-area"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "Destination (= Origin of new flow)" %} </label>
+    </td>
+    <td>
+      <select name="reference-destination"></select>
+    </td>
+    <td>
+      <label> {% trans "Possible Impl. Area" %} </label>
+      <select name="reference-destination-area"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label style="float: left"> {% trans "Material" %} </label>
+    </td>
+    <td>
+      <div name="reference-material"></div>
+    </td>
+    <td>
+      <input type="checkbox" name="include-child-materials"> {% trans "include child materials" %}
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "Process" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="reference-process"></select>
+    </td>
+  </tr>
+</table>
+<br>
+<h4> {% trans "To which activity will the new flow go?" %} </h4>
+<table class='part-table'>
+  <tr>
+    <td>
+      <label> {% trans "New Destination" %} </label>
+    </td>
+    <td>
+      <select name="new-destination"></select>
+    </td>
+    <td>
+      <label> {% trans "Possible Impl. Area" %} </label>
+      <select name="new-origin-area"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label style="float: left"> {% trans "New Material" %} </label>
+    </td>
+    <td>
+      <div name="new-material"></div>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "New Process" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="new-process"></select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "New Material status" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="new-waste">
+        <option value="-1">{% trans "No change" %}</option>
+        <option value="0">{% trans "Product" %}</option>
+        <option value="1">{% trans "Waste" %}</option>
+      </select>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <label> {% trans "Hazard" %} </label>
+    </td>
+    <td>
+      <select class="form-control" name="new-hazardous">
+        <option value="-1">{% trans "No change" %}</option>
+        <option value="0">{% trans "not hazardous" %}</option>
+        <option value="1">{% trans "hazardous" %}</option>
+      </select>
+    </td>
+  </tr>
+</table>
+<br>
+<h4> {% trans "Mass of appended flow in relation to existing flow" %} </h4>
+<div class="row">
+  <input type="radio" name="is-absolute" value="true" disabled> {% trans "absolute change" %} <br>
+  <input type="radio" name="is-absolute" value="false" checked> {% trans "relative change" %} <br>
+  <br>
+  {% trans "Do you want to refer to a user question for calculating the mass?" %} <br>
+  <input type="radio" name="has-question" value="true" checked> {% trans "yes" %}
+  <select class="row with-question" name='question' style="margin-left: 20px; min-width: 200px;"></select>
+  <br>
+  <input type="radio" name="has-question" value="false"> {% trans "no" %} <br>
+  <br>
+  <div class="row" style="margin-top: 15px; font-size: 1.2em;">
+    {% trans "Flow amount of appended flow = Flow amount of existing flow" %}
+    <div class="is-absolute"> &nbsp;+&nbsp;{% trans "Delta" %}</div>
+    <div class="is-relative"> &nbsp;*&nbsp;{% trans "Factor" %}</div>
+  </div>
+  <div class="row" style="font-size: 1.2em;">
+    <div class="is-absolute"> {% trans "Delta" %} </div>
+    <div class="is-relative"> {% trans "Factor" %} </div>
+    &nbsp;=&nbsp;
+    <div class='with-question'>
+      <input name='a' type="number" step="0.0001" style="display: inline-block; width: 150px;">
+      &nbsp;*&nbsp;{% trans "answer to selected question" %}&nbsp;+&nbsp;
+    </div>
+    <input name='b' type="number" step="0.0001" style="display: inline-block; width: 150px;">
+  </div>
+</div>
+</script>
+
+{% endblock %}
